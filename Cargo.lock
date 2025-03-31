@@ -2059,6 +2059,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcu-registers-generator-new"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mcu-registers-systemrdl-new",
+ "proc-macro2",
+ "quote",
+ "registers-systemrdl",
+]
+
+[[package]]
 name = "mcu-registers-systemrdl-new"
 version = "0.1.0"
 dependencies = [
