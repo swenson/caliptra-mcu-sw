@@ -18,34 +18,134 @@ pub fn generate_tock_registers(input: &str, _addrmaps: &[&str]) -> anyhow::Resul
     Ok(format!("{:?}", root))
 }
 
-fn enumerate_instances(root: &Root, body: &ComponentBody) {
+fn enumerate_instances(_root: &Root, _body: &ComponentBody) {
     println!("Enumerating instances for root");
 }
 
+const TRUE: Integer = Integer { width: 1, value: 1 };
+const FALSE: Integer = Integer { width: 1, value: 0 };
+
+#[derive(Clone, Default)]
 struct RootRoot {
-    children: Vec<Rc<dyn Component>>,
+    children: Vec<ComponentIdx>,
     enums: Vec<Enum>,
+    components: Vec<AllComponent>,
+}
+
+type ComponentIdx = usize;
+
+#[derive(Clone)]
+enum AllComponent {
+    AddrMap(AddrMap),
+    Reg(Register),
+    //RegFile(RegisterFile),
+    Field(Field),
+}
+
+impl Component for AllComponent {
+    fn name(&self) -> Option<&str> {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.name(),
+            AllComponent::Reg(reg) => reg.name(),
+            AllComponent::Field(field) => field.name(),
+        }
+    }
+
+    fn component_type(&self) -> ComponentType {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.component_type(),
+            AllComponent::Reg(reg) => reg.component_type(),
+            AllComponent::Field(field) => field.component_type(),
+        }
+    }
+
+    fn parent(&self) -> Option<ComponentIdx> {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.parent(),
+            AllComponent::Reg(reg) => reg.parent(),
+            AllComponent::Field(field) => field.parent(),
+        }
+    }
+
+    fn width(&self) -> usize {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.width(),
+            AllComponent::Reg(reg) => reg.width(),
+            AllComponent::Field(field) => field.width(),
+        }
+    }
+
+    fn offset(&self) -> usize {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.offset(),
+            AllComponent::Reg(reg) => reg.offset(),
+            AllComponent::Field(field) => field.offset(),
+        }
+    }
+
+    fn fields(&self) -> &HashMap<String, ComponentIdx> {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.fields(),
+            AllComponent::Reg(reg) => reg.fields(),
+            AllComponent::Field(field) => field.fields(),
+        }
+    }
+
+    fn instances(&self) -> &[RegisterInstance] {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.instances(),
+            AllComponent::Reg(reg) => reg.instances(),
+            AllComponent::Field(field) => field.instances(),
+        }
+    }
+
+    fn children(&self) -> &[ComponentIdx] {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.children(),
+            AllComponent::Reg(reg) => reg.children(),
+            AllComponent::Field(field) => field.children(),
+        }
+    }
+
+    fn enums(&self) -> &[Enum] {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.enums(),
+            AllComponent::Reg(reg) => reg.enums(),
+            AllComponent::Field(field) => field.enums(),
+        }
+    }
+
+    fn properties(&self) -> &HashMap<String, StringOrInt> {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.properties(),
+            AllComponent::Reg(reg) => reg.properties(),
+            AllComponent::Field(field) => field.properties(),
+        }
+    }
 }
 
 #[derive(Clone)]
 struct Field {
-    parent: Option<Rc<dyn Component>>,
+    parent: Option<ComponentIdx>,
     name: Option<String>,
     properties: HashMap<String, StringOrInt>,
-    _fields: HashMap<String, Rc<Field>>, // just a placeholder
+    _fields: HashMap<String, ComponentIdx>, // just a placeholder
 }
 
 impl Component for Field {
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
     fn as_field(&self) -> Option<&Field> {
         Some(self)
     }
     fn component_type(&self) -> ComponentType {
         ComponentType::Field
     }
-    fn parent(&self) -> Option<Rc<dyn Component>> {
-        self.parent.clone()
+    fn parent(&self) -> Option<ComponentIdx> {
+        self.parent
     }
-    fn fields(&self) -> &HashMap<String, Rc<Field>> {
+    fn fields(&self) -> &HashMap<String, ComponentIdx> {
         &self._fields
     }
     fn width(&self) -> usize {
@@ -60,7 +160,7 @@ impl Component for Field {
         &[]
     }
 
-    fn children(&self) -> &[Rc<dyn Component>] {
+    fn children(&self) -> &[ComponentIdx] {
         &[]
     }
     fn enums(&self) -> &[Enum] {
@@ -78,40 +178,11 @@ struct FieldInstance {
     width: usize,
 }
 
-fn convert_field(
-    parent: Option<Rc<dyn Component>>,
-    name: Option<&str>,
-    body: &ComponentBody,
-) -> Result<(Field, Vec<FieldInstance>), anyhow::Error> {
-    let mut instances = vec![];
-    println!("Field {:?}", name);
-    for elem in body.elements.iter() {
-        match elem {
-            ComponentBodyElem::PropertyAssignment(pa) => {
-                //println!("Property assignment: {:?}", pa);
-                if let Some((key, value)) = evaluate_property(pa) {
-                    println!("Property {}: {}", key, value);
-                }
-            }
-            _ => todo!(),
-        }
-    }
-    Ok((
-        Field {
-            parent,
-            name: name.map(|s| s.to_string()),
-            properties: HashMap::new(),
-            _fields: HashMap::new(),
-        },
-        instances,
-    ))
-}
-
 #[derive(Clone)]
 struct Register {
-    parent: Option<Rc<dyn Component>>,
+    parent: Option<ComponentIdx>,
     name: String,
-    fields: HashMap<String, Rc<Field>>,
+    fields: HashMap<String, ComponentIdx>,
     field_instances: Vec<FieldInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
@@ -128,13 +199,16 @@ impl std::fmt::Debug for Register {
 }
 
 impl Component for Register {
+    fn name(&self) -> Option<&str> {
+        Some(&self.name)
+    }
     fn component_type(&self) -> ComponentType {
         ComponentType::Reg
     }
-    fn parent(&self) -> Option<Rc<dyn Component>> {
-        self.parent.clone()
+    fn parent(&self) -> Option<ComponentIdx> {
+        self.parent
     }
-    fn fields(&self) -> &HashMap<String, Rc<Field>> {
+    fn fields(&self) -> &HashMap<String, ComponentIdx> {
         &self.fields
     }
     fn width(&self) -> usize {
@@ -149,7 +223,7 @@ impl Component for Register {
         &[]
     }
 
-    fn children(&self) -> &[Rc<dyn Component>] {
+    fn children(&self) -> &[ComponentIdx] {
         &[]
     }
     fn enums(&self) -> &[Enum] {
@@ -175,562 +249,683 @@ impl std::fmt::Display for StringOrInt {
     }
 }
 
-fn convert_reg(
-    parent: Option<Rc<dyn Component>>,
-    name: &str,
-    body: &ComponentBody,
-) -> Result<Register, anyhow::Error> {
-    //println!("Reg {} body: {:?}", name, body);
+impl RootRoot {
+    pub fn parse(root: &Root) -> Result<Self, anyhow::Error> {
+        let mut root_root = RootRoot::default();
+        root_root.parse_root(root)?;
+        Ok(root_root)
+    }
 
-    let mut reg = Register {
-        parent: parent.clone(),
-        name: name.to_string(),
-        fields: HashMap::new(),
-        field_instances: vec![],
-        enums: vec![],
-        properties: HashMap::new(),
-    };
-    for elem in body.elements.iter() {
-        match elem {
-            ComponentBodyElem::PropertyAssignment(pa) => {
-                if let Some((key, value)) = evaluate_property(pa) {
-                    reg.properties.insert(key, value);
+    pub fn parse_root(&mut self, root: &Root) -> Result<(), anyhow::Error> {
+        for d in root.descriptions.iter() {
+            match d {
+                Description::EnumDef(e) => {
+                    let e = self.parse_enum(e)?;
+                    self.enums.push(e);
                 }
-            }
-            ComponentBodyElem::ComponentDef(component) => {
-                let comp = convert_component_field(parent.clone(), component)?;
-                if let Some(comp) = comp {
-                    if let Some(name) = comp.name.as_ref() {
-                        println!("\nInserting field {} into reg", name);
-                        reg.fields.insert(name.clone(), comp.clone());
-                    }
-                    if component.insts.is_some() {
-                        let new_insts = convert_field_instances(
-                            comp.clone(),
-                            component.insts.as_ref().unwrap(),
-                        )?;
-                        reg.field_instances.extend(new_insts);
-                    }
-                }
-            }
-            ComponentBodyElem::EnumDef(enum_def) => {
-                let enum_ = parse_enum(enum_def)?;
-                reg.enums.push(enum_);
-            }
-            ComponentBodyElem::ExplicitComponentInst(inst) => {
-                if let Some(field) = find_field(&reg, &inst.id) {
-                    let new_insts = convert_field_instances(field, &inst.component_insts)?;
-                    reg.field_instances.extend(new_insts);
-                } else {
-                    bail!("Field {} not found in scope", inst.id);
-                }
-            }
-            _ => {
-                println!("Unsupported element in register body: {:?}", elem);
-                todo!()
-            }
-        }
-    }
-    Ok(reg)
-}
-
-fn find_field(scope: &dyn Component, name: &str) -> Option<Rc<Field>> {
-    if let Some(f) = scope.fields().get(name) {
-        Some(f.clone())
-    } else if let Some(parent) = scope.parent() {
-        find_field(parent.as_ref(), name)
-    } else {
-        None
-    }
-}
-
-fn convert_field_instances(
-    field: Rc<Field>,
-    insts: &ComponentInsts,
-) -> Result<Vec<FieldInstance>, anyhow::Error> {
-    let mut instances = vec![];
-    let mut last_msb: Option<u64> = None;
-    for inst in insts.component_insts.iter() {
-        let fieldwidth = if let Some(ArrayOrRange::Array(expr)) = inst.array_or_range.as_ref() {
-            if expr.len() != 1 {
-                bail!("Only single dimension arrays supported for field instances");
-            }
-            let x = &expr[0];
-            evaluate_constant_expr_int(x)?.value
-        } else {
-            1 // TODO: support fieldwidth default property
-        };
-        let lsb = if let Some(eq) = inst.equals.as_ref() {
-            evaluate_constant_expr_int(eq)?.value
-        } else {
-            last_msb.map(|b| b + 1).unwrap_or(0)
-        };
-        let msb = lsb + fieldwidth - 1;
-        last_msb = Some(msb);
-        let instance = FieldInstance {
-            id: inst.id.clone(),
-            width: fieldwidth as usize,
-            offset: lsb as usize,
-        };
-        instances.push(instance);
-    }
-    Ok(instances)
-}
-
-fn convert_component(
-    parent: Option<Rc<dyn Component>>,
-    component: &mcu_registers_systemrdl_new::ast::Component,
-) -> Result<Option<Rc<dyn Component>>, anyhow::Error> {
-    match &component.def {
-        ComponentDef::Named(t, name, _, body) => match *t {
-            ComponentType::AddrMap => {
-                let addrmap = convert_addrmap(parent, name, body)?;
-                Ok(Some(Rc::new(addrmap)))
-            }
-            ComponentType::Signal => Ok(None),
-            ComponentType::Field => {
-                let (field, _insts) = convert_field(parent, Some(name), body)?;
-                Ok(Some(Rc::new(field)))
-            }
-            _ => bail!("Unsupported named component type: {:?}", t),
-        },
-        ComponentDef::Anon(t, body) => match *t {
-            ComponentType::AddrMap => {
-                let addrmap = convert_addrmap(parent, "anon", body)?;
-                Ok(Some(Rc::new(addrmap)))
-            }
-            ComponentType::Signal => Ok(None),
-            ComponentType::Reg => {
-                let reg = convert_reg(parent, "anon", body)?;
-                //println!("Reg: {:?}", reg);
-                Ok(Some(Rc::new(reg)))
-            }
-            _ => bail!("Unsupported component type: {:?}", t),
-        },
-    }
-}
-
-fn convert_component_field(
-    parent: Option<Rc<dyn Component>>,
-    component: &mcu_registers_systemrdl_new::ast::Component,
-) -> Result<Option<Rc<Field>>, anyhow::Error> {
-    match &component.def {
-        ComponentDef::Named(t, name, _, body) => match *t {
-            ComponentType::Field => {
-                let (field, _insts) = convert_field(parent, Some(name), body)?;
-                Ok(Some(Rc::new(field)))
-            }
-            _ => bail!("Unsupported named component type: {:?}", t),
-        },
-        ComponentDef::Anon(t, body) => match *t {
-            ComponentType::Field => {
-                let (field, _insts) = convert_field(parent, None, body)?;
-                Ok(Some(Rc::new(field)))
-            }
-            _ => bail!("Unsupported component type: {:?}", t),
-        },
-    }
-}
-
-fn convert_addrmap(
-    parent: Option<Rc<dyn Component>>,
-    name: &str,
-    body: &ComponentBody,
-) -> Result<AddrMap, anyhow::Error> {
-    let mut enums = vec![];
-    let mut children = vec![];
-    let mut properties = HashMap::new();
-    let mut instances = vec![];
-    let mut fields = HashMap::new();
-    for elem in body.elements.iter() {
-        match elem {
-            ComponentBodyElem::ComponentDef(component) => {
-                let comp = convert_component(parent.clone(), component)?;
-                if let Some(comp) = comp {
-                    if component.insts.is_some() && comp.component_type() == ComponentType::Reg {
-                        let new_insts =
-                            convert_instances(comp.clone(), component.insts.as_ref().unwrap())?;
-                        instances.extend(new_insts);
-                    }
-                    children.push(comp.clone());
-                    comp.clone().as_field().map(|f| {
-                        if let Some(name) = &f.name {
-                            println!("\nInserting field {} into map", name);
-                            fields.insert(name.clone(), Rc::new(f.clone()));
+                Description::ComponentDef(c) => match &c.def {
+                    ComponentDef::Named(t, name, _, body) => {
+                        match *t {
+                            ComponentType::AddrMap => {
+                                let addrmap = self.convert_addrmap(None, name, body)?;
+                                self.components.push(AllComponent::AddrMap(addrmap));
+                                self.children.push(self.components.len() - 1);
+                            }
+                            // ComponentType::Reg => {
+                            //     let reg = convert_reg(None, name, body);
+                            //     root_root.children.push(Rc::new(reg));
+                            // }
+                            // ComponentType::RegFile => {
+                            //     let regfile = convert_regfile(None, name, body);
+                            //     root_root.children.push(Rc::new(regfile));
+                            // }
+                            _ => {
+                                println!("Other component type: {:?}", t);
+                            }
                         }
-                    });
+                        // if *t == ComponentType::AddrMap {
+                        //     println!("Component {:?} {}", t, name);
+                        // } else if *t == ComponentType::
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn convert_field(
+        &self,
+        parent: Option<ComponentIdx>,
+        name: Option<&str>,
+        body: &ComponentBody,
+    ) -> Result<(Field, Vec<FieldInstance>), anyhow::Error> {
+        let instances = vec![];
+        println!("Field {:?}", name);
+        for elem in body.elements.iter() {
+            match elem {
+                ComponentBodyElem::PropertyAssignment(pa) => {
+                    //println!("Property assignment: {:?}", pa);
+                    if let Some((key, value)) = self.evaluate_property(pa) {
+                        println!("Property {}: {}", key, value);
+                    }
                 }
+                _ => todo!(),
             }
-            ComponentBodyElem::EnumDef(enum_def) => {
-                enums.push(parse_enum(enum_def)?);
-            }
-            ComponentBodyElem::StructDef(struct_def) => todo!(),
-            ComponentBodyElem::ConstraintDef(constraint_def) => todo!(),
-            ComponentBodyElem::ExplicitComponentInst(explicit_component_inst) => todo!(),
-            ComponentBodyElem::PropertyAssignment(property_assignment) => {
-                //println!("Property assignment: {:?}", property_assignment);
-                if let Some((key, value)) = evaluate_property(property_assignment) {
-                    properties.insert(key, value);
+        }
+        Ok((
+            Field {
+                parent,
+                name: name.map(|s| s.to_string()),
+                properties: HashMap::new(),
+                _fields: HashMap::new(),
+            },
+            instances,
+        ))
+    }
+
+    fn convert_reg(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        name: &str,
+        body: &ComponentBody,
+    ) -> Result<Register, anyhow::Error> {
+        //println!("Reg {} body: {:?}", name, body);
+
+        let mut reg = Register {
+            parent,
+            name: name.to_string(),
+            fields: HashMap::new(),
+            field_instances: vec![],
+            enums: vec![],
+            properties: HashMap::new(),
+        };
+        for elem in body.elements.iter() {
+            match elem {
+                ComponentBodyElem::PropertyAssignment(pa) => {
+                    if let Some((key, value)) = self.evaluate_property(pa) {
+                        reg.properties.insert(key, value);
+                    }
+                }
+                ComponentBodyElem::ComponentDef(component) => {
+                    let comp = self.convert_component_field(parent, component)?;
+                    if let Some(comp_idx) = comp {
+                        let comp = &self.components[comp_idx];
+                        if let Some(name) = comp.name() {
+                            println!("\nInserting field {} into reg", name);
+                            reg.fields.insert(name.to_string(), comp_idx);
+                        }
+                        if component.insts.is_some() {
+                            let new_insts = self.convert_field_instances(
+                                comp_idx,
+                                component.insts.as_ref().unwrap(),
+                            )?;
+                            reg.field_instances.extend(new_insts);
+                        }
+                    }
+                }
+                ComponentBodyElem::EnumDef(enum_def) => {
+                    let enum_ = self.parse_enum(enum_def)?;
+                    reg.enums.push(enum_);
+                }
+                ComponentBodyElem::ExplicitComponentInst(inst) => {
+                    // look in the register components first
+                    if reg.fields.contains_key(&inst.id) {
+                        let field_idx = reg.fields[&inst.id];
+                        let new_insts =
+                            self.convert_field_instances(field_idx, &inst.component_insts)?;
+                        reg.field_instances.extend(new_insts);
+                    } else if reg.enums.iter().find(|e| e.name == inst.id).is_some() {
+                        // found in enums
+                    } else if let Some(parent) = parent {
+                        // find in parent
+                        if let Some(component_idx) =
+                            self.find_component(&self.components[parent], &inst.id)
+                        {
+                            todo!()
+                        } else {
+                            todo!()
+                        }
+                    } else {
+                        bail!("Component {} not found in scope", inst.id);
+                    }
+                }
+                _ => {
+                    println!("Unsupported element in register body: {:?}", elem);
+                    todo!()
                 }
             }
         }
+        Ok(reg)
     }
-    println!("Properties {}: {:?}", name, properties);
-    Ok(AddrMap {
-        name: name.to_string(),
-        offset: 0,
-        width: 0,
-        parent,
-        children,
-        instances: vec![],
-        enums,
-        properties,
-        fields,
-    })
-}
 
-fn convert_instances(
-    reg: Rc<dyn Component>,
-    insts: &ComponentInsts,
-) -> Result<Vec<RegisterInstance>, anyhow::Error> {
-    // println!(
-    //     "Converting instances for reg {:?}: {:?}",
-    //     reg.component_type(),
-    //     insts
-    // );
-    let mut instances = vec![];
-    for inst in insts.component_insts.iter() {
-        let offset = if let Some(eq) = &inst.equals {
-            Some(evaluate_constant_expr_int(&eq)?.value as usize)
+    fn find_field(&self, src: &AllComponent, name: &str) -> Option<ComponentIdx> {
+        if let Some(f) = src.fields().get(name) {
+            Some(f.clone())
+        } else if let Some(parent) = src.parent() {
+            self.find_field(&self.components[parent], name)
         } else {
             None
-        };
-        // TODO: support regwidth
-        let inst = RegisterInstance {
-            name: inst.id.clone(),
-            offset,
-            width: 32,
-            type_: reg.clone(),
-        };
-        instances.push(inst);
+        }
     }
-    Ok(instances)
-}
 
-fn evaluate_property(property_assignment: &PropertyAssignment) -> Option<(String, StringOrInt)> {
-    match property_assignment {
-        PropertyAssignment::ExplicitOrDefaultPropAssignment(pa) => match pa {
-            ExplicitOrDefaultPropAssignment::ExplicitPropModifier(
-                _default_keyword,
-                _explicit_prop_modifier,
-            ) => todo!(),
-            ExplicitOrDefaultPropAssignment::ExplicitPropAssignment(_default, epa) => match epa {
-                ExplicitPropertyAssignment::Assignment(
-                    identity_or_prop_keyword,
-                    prop_assignment_rhs,
-                ) => {
-                    let id = match identity_or_prop_keyword {
-                        IdentityOrPropKeyword::Id(id) => id.clone(),
-                        IdentityOrPropKeyword::PropKeyword(prop_keyword) => {
-                            prop_keyword.to_string()
-                        }
-                    };
-                    let rhs = match prop_assignment_rhs {
-                        Some(rhs) => match rhs {
-                            PropAssignmentRhs::ConstantExpr(constant_expr) => {
-                                evaluate_constant_expr_str(constant_expr)
-                                    .ok()
-                                    .map(StringOrInt::String)
-                                    .or(evaluate_constant_expr_int(constant_expr)
-                                        .map(StringOrInt::Int)
-                                        .ok())
-                            }
-                            PropAssignmentRhs::PrecedenceType(_precedence_type) => todo!(),
-                        },
-                        None => todo!(),
-                    };
-                    rhs.map(|rhs| (id.clone(), rhs))
+    fn convert_field_instances(
+        &self,
+        _field_idx: ComponentIdx,
+        insts: &ComponentInsts,
+    ) -> Result<Vec<FieldInstance>, anyhow::Error> {
+        let mut instances = vec![];
+        let mut last_msb: Option<u64> = None;
+        for inst in insts.component_insts.iter() {
+            let fieldwidth = if let Some(ArrayOrRange::Array(expr)) = inst.array_or_range.as_ref() {
+                if expr.len() != 1 {
+                    bail!("Only single dimension arrays supported for field instances");
                 }
-                ExplicitPropertyAssignment::EncodeAssignment(e) => {
-                    Some(("encode".to_string(), StringOrInt::String(e.clone())))
+                let x = &expr[0];
+                self.evaluate_constant_expr_int(x)?.value
+            } else {
+                1 // TODO: support fieldwidth default property
+            };
+            let lsb = if let Some(eq) = inst.equals.as_ref() {
+                self.evaluate_constant_expr_int(eq)?.value
+            } else {
+                last_msb.map(|b| b + 1).unwrap_or(0)
+            };
+            let msb = lsb + fieldwidth - 1;
+            last_msb = Some(msb);
+            let instance = FieldInstance {
+                id: inst.id.clone(),
+                width: fieldwidth as usize,
+                offset: lsb as usize,
+            };
+            instances.push(instance);
+        }
+        Ok(instances)
+    }
+
+    fn convert_component(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        component: &mcu_registers_systemrdl_new::ast::Component,
+    ) -> Result<Option<ComponentIdx>, anyhow::Error> {
+        match &component.def {
+            ComponentDef::Named(t, name, _, body) => match *t {
+                ComponentType::AddrMap => {
+                    let addrmap = self.convert_addrmap(parent, name, body)?;
+                    self.components.push(AllComponent::AddrMap(addrmap));
+                    Ok(Some(self.components.len() - 1))
                 }
+                ComponentType::Signal => Ok(None),
+                ComponentType::Field => {
+                    let (field, _insts) = self.convert_field(parent, Some(name), body)?;
+                    self.components.push(AllComponent::Field(field));
+                    Ok(Some(self.components.len() - 1))
+                }
+                _ => bail!("Unsupported named component type: {:?}", t),
             },
-        },
-        PropertyAssignment::PostPropAssignment(_post_prop_assignment) => todo!(),
+            ComponentDef::Anon(t, body) => match *t {
+                ComponentType::AddrMap => {
+                    let addrmap = self.convert_addrmap(parent, "anon", body)?;
+                    self.components.push(AllComponent::AddrMap(addrmap));
+                    Ok(Some(self.components.len() - 1))
+                }
+                ComponentType::Signal => Ok(None),
+                ComponentType::Reg => {
+                    let reg = self.convert_reg(parent, "anon", body)?;
+                    self.components.push(AllComponent::Reg(reg));
+                    Ok(Some(self.components.len() - 1))
+                }
+                _ => bail!("Unsupported component type: {:?}", t),
+            },
+        }
     }
-}
 
-const TRUE: Integer = Integer { width: 1, value: 1 };
+    fn convert_component_field<'a>(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        component: &mcu_registers_systemrdl_new::ast::Component,
+    ) -> Result<Option<ComponentIdx>, anyhow::Error> {
+        match &component.def {
+            ComponentDef::Named(t, name, _, body) => match *t {
+                ComponentType::Field => {
+                    let (field, _insts) = self.convert_field(parent, Some(name), body)?;
+                    // TODO: add field instances
+                    self.components.push(AllComponent::Field(field));
+                    Ok(Some(self.components.len() - 1))
+                }
+                _ => bail!("Unsupported named component type: {:?}", t),
+            },
+            ComponentDef::Anon(t, body) => match *t {
+                ComponentType::Field => {
+                    let (field, _insts) = self.convert_field(parent, None, body)?;
+                    // TODO: add field instances
+                    self.components.push(AllComponent::Field(field));
+                    Ok(Some(self.components.len() - 1))
+                }
+                _ => bail!("Unsupported component type: {:?}", t),
+            },
+        }
+    }
 
-const FALSE: Integer = Integer { width: 1, value: 0 };
-
-fn evaluate_constant_expr_str(expr: &ConstantExpr) -> Result<String, anyhow::Error> {
-    match expr {
-        ConstantExpr::ConstantPrimary(prim, cont) => {
-            if cont.is_some() {
-                bail!("Unsupported complex expression for string");
+    fn find_component<'a>(&self, src: &AllComponent, name: &str) -> Option<ComponentIdx> {
+        println!(
+            "Checking {:?} {} children",
+            src.name(),
+            src.children().len()
+        );
+        for child_idx in src.children().iter().copied() {
+            let child = &self.components[child_idx];
+            println!("Check {:?} -> {:?}", src.name(), child.name());
+            if child.name() == Some(name) {
+                return Some(child_idx);
             }
-            match prim {
-                ConstantPrimary::Base(constant_primary_base) => match constant_primary_base {
-                    ConstantPrimaryBase::PrimaryLiteral(primary_literal) => match primary_literal {
-                        PrimaryLiteral::StringLiteral(s) => Ok(s.clone()),
-                        _ => bail!(
-                            "Unsupported literal in string evaluation context: {:?}",
-                            primary_literal
-                        ),
-                    },
-                    _ => {
-                        bail!("Unsupported expression for string");
-                    }
-                },
-                ConstantPrimary::Cast(constant_primary_base, constant_expr) => {
-                    bail!("Casting string not supported")
+        }
+        println!(
+            "Parent {:?}",
+            src.parent().map(|p| self.components[p].name())
+        );
+        if let Some(parent) = src.parent() {
+            self.find_component(&self.components[parent], name)
+        } else {
+            // check root
+            for child_idx in self.children.iter().copied() {
+                let child = &self.components[child_idx];
+                println!("Check {:?} -> {:?}", src.name(), child.name());
+                if child.name() == Some(name) {
+                    return Some(child_idx);
                 }
             }
-        }
-        ConstantExpr::UnaryOp(op, expr, cont) => {
-            bail!("Unsupported unary operation on string: {:?}", op);
+
+            None
         }
     }
-}
 
-fn evaluate_constant_expr_cont_int(
-    val: Integer,
-    cont: &Option<Box<ConstantExprContinue>>,
-) -> Result<Integer, anyhow::Error> {
-    match cont {
-        None => Ok(val),
-        Some(cont) => {
-            match cont.as_ref() {
-                ConstantExprContinue::BinaryOp(op, expr, cont) => {
-                    let rhs = evaluate_constant_expr_int(expr.as_ref())?;
-
-                    let a = val.value;
-                    let b = rhs.value;
-                    let width = val.width;
-
-                    // short circuit for shift since they may have different widths
-                    let new_val = match op {
-                        BinaryOp::RightShift => Some(a >> b),
-                        BinaryOp::LeftShift => Some(a << b),
-                        _ => None,
-                    };
-                    if let Some(value) = new_val {
-                        return Ok(Integer { width, value });
+    fn convert_addrmap(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        name: &str,
+        body: &ComponentBody,
+    ) -> Result<AddrMap, anyhow::Error> {
+        let mut addrmap = AddrMap {
+            parent,
+            name: name.to_string(),
+            ..Default::default()
+        };
+        for elem in body.elements.iter() {
+            match elem {
+                ComponentBodyElem::ComponentDef(component) => {
+                    let comp = self.convert_component(parent.clone(), component)?;
+                    if let Some(comp_idx) = comp {
+                        let comp = &self.components[comp_idx];
+                        if component.insts.is_some() {
+                            match comp {
+                                AllComponent::Reg(_) => {
+                                    let new_insts = self.convert_instances(
+                                        comp_idx,
+                                        component.insts.as_ref().unwrap(),
+                                    )?;
+                                    addrmap.instances.extend(new_insts);
+                                }
+                                _ => {}
+                            }
+                        }
+                        addrmap.children.push(comp_idx);
+                        // comp.clone().as_field().map(|f| {
+                        //     if let Some(name) = &f.name {
+                        //         println!("\nInserting field {} into map", name);
+                        //         addrmap.fields.insert(name.clone(), Rc::new(f.clone()));
+                        //     }
+                        // });
                     }
-
-                    if val.width != rhs.width {
+                }
+                ComponentBodyElem::EnumDef(enum_def) => {
+                    addrmap.enums.push(self.parse_enum(enum_def)?);
+                }
+                ComponentBodyElem::StructDef(_struct_def) => todo!(),
+                ComponentBodyElem::ConstraintDef(_constraint_def) => todo!(),
+                ComponentBodyElem::ExplicitComponentInst(explicit_component_inst) => {
+                    println!("Explicit component inst: {:?}", explicit_component_inst);
+                    if let Some(component_idx) = self.find_component(
+                        &AllComponent::AddrMap(addrmap),
+                        &explicit_component_inst.id,
+                    ) {
+                        println!(
+                            "Found component: {:?}",
+                            self.components[component_idx].name()
+                        );
+                    } else {
                         bail!(
-                            "Incompatible widths in expression: {} and {}",
-                            val.width,
-                            rhs.width
+                            "Component {} not found in scope",
+                            explicit_component_inst.id
                         );
                     }
-
-                    // Check booleans
-                    let bool_value = match op {
-                        BinaryOp::LessThan => Some(if a < b { TRUE } else { FALSE }),
-                        BinaryOp::GreaterThan => Some(if a > b { TRUE } else { FALSE }),
-                        BinaryOp::LessThanOrEqual => Some(if a <= b { TRUE } else { FALSE }),
-                        BinaryOp::GreaterThanOrEqual => Some(if a >= b { TRUE } else { FALSE }),
-                        BinaryOp::EqualsEquals => Some(if a == b { TRUE } else { FALSE }),
-                        BinaryOp::NotEquals => Some(if a != b { TRUE } else { FALSE }),
-                        _ => None,
-                    };
-
-                    if let Some(b) = bool_value {
-                        return Ok(b);
-                    }
-
-                    let value: u64 = match op {
-                        BinaryOp::AndAnd => a & b,
-                        BinaryOp::OrOr => a | b,
-                        BinaryOp::And => a & b,
-                        BinaryOp::Or => a | b,
-                        BinaryOp::Xor => a ^ b,
-                        BinaryOp::Xnor => !(a ^ b),
-                        BinaryOp::Times => a * b,
-                        BinaryOp::Divide => a / b,
-                        BinaryOp::Modulus => a % b,
-                        BinaryOp::Plus => a + b,
-                        BinaryOp::Minus => a - b,
-                        BinaryOp::Power => a.pow(b as u32),
-                        _ => unreachable!(),
-                    };
-                    Ok(Integer { width, value })
+                    todo!()
                 }
-                ConstantExprContinue::TernaryOp(b, c, cont) => {
-                    let a = val;
-                    if a.width != 1 {
-                        bail!("Cannot use non-boolean value as ternary condition");
-                    }
-                    let b = evaluate_constant_expr_int(b.as_ref())?;
-                    let c = evaluate_constant_expr_int(c.as_ref())?;
-                    if a == TRUE {
-                        evaluate_constant_expr_cont_int(b, cont)
-                    } else {
-                        evaluate_constant_expr_cont_int(c, cont)
+                ComponentBodyElem::PropertyAssignment(property_assignment) => {
+                    //println!("Property assignment: {:?}", property_assignment);
+                    if let Some((key, value)) = self.evaluate_property(property_assignment) {
+                        addrmap.properties.insert(key, value);
                     }
                 }
             }
         }
+        println!("Properties {}: {:?}", name, addrmap.properties);
+        Ok(addrmap)
     }
-}
 
-fn evaluate_primary_literal_int(p: &PrimaryLiteral) -> Result<Integer, anyhow::Error> {
-    let value = match p {
-        PrimaryLiteral::Number(n) => Integer {
-            width: 32,
-            value: *n,
-        },
-        PrimaryLiteral::Bits(b) => Integer {
-            width: b.w() as u8,
-            value: b.val(),
-        },
-        _ => bail!("Unsupported literal in integer evaluation context: {:?}", p),
-    };
-    Ok(value)
-}
-
-fn evaluate_constant_primary_base_int(
-    base: &ConstantPrimaryBase,
-) -> Result<Integer, anyhow::Error> {
-    match base {
-        ConstantPrimaryBase::PrimaryLiteral(p) => evaluate_primary_literal_int(p),
-        ConstantPrimaryBase::ConstantExpr(c) => evaluate_constant_expr_int(c),
-        ConstantPrimaryBase::InstanceOrPropRef(_) => {
-            bail!("References not supported in integer context")
-        }
-        ConstantPrimaryBase::StructLiteral(_, _) => {
-            bail!("Struct literal not supported in integer context")
-        }
-        ConstantPrimaryBase::ArrayLiteral(_) => {
-            bail!("Array literal not supported in integer context")
-        }
-        ConstantPrimaryBase::SimpleTypeCast(_, _) => {
-            bail!("Simple type cast not supported in integer context")
-        }
-        ConstantPrimaryBase::BooleanCast(_) => {
-            bail!("Boolean type cast not supported in integer context")
-        }
-        ConstantPrimaryBase::ConstantConcat(_) => bail!("Integer concatenation not supported"),
-        ConstantPrimaryBase::ConstantMultipleConcat(_, _) => {
-            bail!("Integer multiple concatenation not supported")
-        }
-    }
-}
-
-fn evaluate_cast(value: Integer, expr: &ConstantExpr) -> Result<Integer, anyhow::Error> {
-    bail!("Casting not supported");
-}
-
-fn evaluate_constant_primary_int(prim: &ConstantPrimary) -> Result<Integer, anyhow::Error> {
-    match prim {
-        ConstantPrimary::Base(base) => evaluate_constant_primary_base_int(base),
-        ConstantPrimary::Cast(base, cast) => {
-            let base = evaluate_constant_primary_base_int(base)?;
-            evaluate_cast(base, cast.as_ref())
-        }
-    }
-}
-
-fn evaluate_constant_expr_int(expr: &ConstantExpr) -> Result<Integer, anyhow::Error> {
-    match expr {
-        ConstantExpr::ConstantPrimary(prim, cont) => {
-            let val = evaluate_constant_primary_int(prim)?;
-            evaluate_constant_expr_cont_int(val, cont)
-        }
-        ConstantExpr::UnaryOp(op, expr, cont) => {
-            let expr = evaluate_constant_expr_int(expr)?;
-            let width = expr.width;
-            let val = expr.value;
-            let new_val = match op {
-                UnaryOp::LogicalNot => !val,
-                UnaryOp::Plus => val,
-                UnaryOp::Minus => (!val) + 1,
-                UnaryOp::Not => !val,
-                UnaryOp::And => bail!("Unsupported unary operation on integer: &"),
-                UnaryOp::Nand => bail!("Unsupported unary operation on integer: ~&"),
-                UnaryOp::Or => bail!("Unsupported unary operation on integer: |"),
-                UnaryOp::Nor => bail!("Unsupported unary operation on integer: ~&"),
-                UnaryOp::Xor => bail!("Unsupported unary operation on integer: ^"),
-                UnaryOp::Xnor => bail!("Unsupported unary operation on integer: &"),
+    fn convert_instances(
+        &self,
+        reg: ComponentIdx,
+        insts: &ComponentInsts,
+    ) -> Result<Vec<RegisterInstance>, anyhow::Error> {
+        // println!(
+        //     "Converting instances for reg {:?}: {:?}",
+        //     reg.component_type(),
+        //     insts
+        // );
+        let mut instances = vec![];
+        for inst in insts.component_insts.iter() {
+            let offset = if let Some(eq) = &inst.equals {
+                Some(self.evaluate_constant_expr_int(&eq)?.value as usize)
+            } else {
+                None
             };
-            let val = Integer {
-                width,
-                value: new_val,
-            };
-            evaluate_constant_expr_cont_int(val, cont)
-        }
-    }
-}
-
-fn parse_enum(e: &EnumDef) -> Result<Enum, anyhow::Error> {
-    let mut values = vec![];
-    let mut last_value: Option<Integer> = None;
-    for entry in e.body.iter() {
-        let val = match (&last_value, &entry.expr) {
-            (None, None) => Integer {
+            // TODO: support regwidth
+            let inst = RegisterInstance {
+                name: inst.id.clone(),
+                offset,
                 width: 32,
-                value: 0,
-            },
-            (Some(last_val), None) => last_val.add(1),
-            (_, Some(expr)) => evaluate_constant_expr_int(expr)?,
-        };
-        last_value = Some(val);
-        let val = EnumValue {
-            name: entry.id.clone(),
-            value: val,
-        };
-        values.push(val);
+                type_: reg,
+            };
+            instances.push(inst);
+        }
+        Ok(instances)
     }
-    Ok(Enum {
-        name: e.id.clone(),
-        values,
-    })
-}
 
-#[allow(dead_code)]
-fn parse_root(root: &Root) -> Result<RootRoot, anyhow::Error> {
-    let mut root_root = RootRoot {
-        children: Vec::new(),
-        enums: Vec::new(),
-    };
-    for d in root.descriptions.iter() {
-        match d {
-            Description::EnumDef(e) => {
-                root_root.enums.push(parse_enum(e)?);
-            }
-            Description::ComponentDef(c) => match &c.def {
-                ComponentDef::Named(t, name, _, body) => {
-                    match *t {
-                        ComponentType::AddrMap => {
-                            let addrmap = convert_addrmap(None, name, body)?;
-                            root_root.children.push(Rc::new(addrmap));
-                        }
-                        // ComponentType::Reg => {
-                        //     let reg = convert_reg(None, name, body);
-                        //     root_root.children.push(Rc::new(reg));
-                        // }
-                        // ComponentType::RegFile => {
-                        //     let regfile = convert_regfile(None, name, body);
-                        //     root_root.children.push(Rc::new(regfile));
-                        // }
-                        _ => {
-                            println!("Other component type: {:?}", t);
-                        }
+    fn evaluate_property(
+        &self,
+        property_assignment: &PropertyAssignment,
+    ) -> Option<(String, StringOrInt)> {
+        match property_assignment {
+            PropertyAssignment::ExplicitOrDefaultPropAssignment(pa) => match pa {
+                ExplicitOrDefaultPropAssignment::ExplicitPropModifier(
+                    _default_keyword,
+                    _explicit_prop_modifier,
+                ) => todo!(),
+                ExplicitOrDefaultPropAssignment::ExplicitPropAssignment(_default, epa) => match epa
+                {
+                    ExplicitPropertyAssignment::Assignment(
+                        identity_or_prop_keyword,
+                        prop_assignment_rhs,
+                    ) => {
+                        let id = match identity_or_prop_keyword {
+                            IdentityOrPropKeyword::Id(id) => id.clone(),
+                            IdentityOrPropKeyword::PropKeyword(prop_keyword) => {
+                                prop_keyword.to_string()
+                            }
+                        };
+                        let rhs = match prop_assignment_rhs {
+                            Some(rhs) => match rhs {
+                                PropAssignmentRhs::ConstantExpr(constant_expr) => self
+                                    .evaluate_constant_expr_str(constant_expr)
+                                    .ok()
+                                    .map(StringOrInt::String)
+                                    .or(self
+                                        .evaluate_constant_expr_int(constant_expr)
+                                        .map(StringOrInt::Int)
+                                        .ok()),
+                                PropAssignmentRhs::PrecedenceType(_precedence_type) => todo!(),
+                            },
+                            None => todo!(),
+                        };
+                        rhs.map(|rhs| (id.clone(), rhs))
                     }
-                    // if *t == ComponentType::AddrMap {
-                    //     println!("Component {:?} {}", t, name);
-                    // } else if *t == ComponentType::
-                }
-                _ => {}
+                    ExplicitPropertyAssignment::EncodeAssignment(e) => {
+                        Some(("encode".to_string(), StringOrInt::String(e.clone())))
+                    }
+                },
             },
-            _ => {}
+            PropertyAssignment::PostPropAssignment(_post_prop_assignment) => todo!(),
         }
     }
 
-    Ok(root_root)
+    fn evaluate_constant_expr_str(&self, expr: &ConstantExpr) -> Result<String, anyhow::Error> {
+        match expr {
+            ConstantExpr::ConstantPrimary(prim, cont) => {
+                if cont.is_some() {
+                    bail!("Unsupported complex expression for string");
+                }
+                match prim {
+                    ConstantPrimary::Base(constant_primary_base) => match constant_primary_base {
+                        ConstantPrimaryBase::PrimaryLiteral(primary_literal) => {
+                            match primary_literal {
+                                PrimaryLiteral::StringLiteral(s) => Ok(s.clone()),
+                                _ => bail!(
+                                    "Unsupported literal in string evaluation context: {:?}",
+                                    primary_literal
+                                ),
+                            }
+                        }
+                        _ => {
+                            bail!("Unsupported expression for string");
+                        }
+                    },
+                    ConstantPrimary::Cast(_constant_primary_base, _constant_expr) => {
+                        bail!("Casting string not supported")
+                    }
+                }
+            }
+            ConstantExpr::UnaryOp(op, _expr, _cont) => {
+                bail!("Unsupported unary operation on string: {:?}", op);
+            }
+        }
+    }
+
+    fn evaluate_constant_expr_cont_int(
+        &self,
+        val: Integer,
+        cont: &Option<Box<ConstantExprContinue>>,
+    ) -> Result<Integer, anyhow::Error> {
+        match cont {
+            None => Ok(val),
+            Some(cont) => {
+                match cont.as_ref() {
+                    ConstantExprContinue::BinaryOp(op, expr, _cont) => {
+                        let rhs = self.evaluate_constant_expr_int(expr.as_ref())?;
+
+                        let a = val.value;
+                        let b = rhs.value;
+                        let width = val.width;
+
+                        // short circuit for shift since they may have different widths
+                        let new_val = match op {
+                            BinaryOp::RightShift => Some(a >> b),
+                            BinaryOp::LeftShift => Some(a << b),
+                            _ => None,
+                        };
+                        if let Some(value) = new_val {
+                            return Ok(Integer { width, value });
+                        }
+
+                        if val.width != rhs.width {
+                            bail!(
+                                "Incompatible widths in expression: {} and {}",
+                                val.width,
+                                rhs.width
+                            );
+                        }
+
+                        // Check booleans
+                        let bool_value = match op {
+                            BinaryOp::LessThan => Some(if a < b { TRUE } else { FALSE }),
+                            BinaryOp::GreaterThan => Some(if a > b { TRUE } else { FALSE }),
+                            BinaryOp::LessThanOrEqual => Some(if a <= b { TRUE } else { FALSE }),
+                            BinaryOp::GreaterThanOrEqual => Some(if a >= b { TRUE } else { FALSE }),
+                            BinaryOp::EqualsEquals => Some(if a == b { TRUE } else { FALSE }),
+                            BinaryOp::NotEquals => Some(if a != b { TRUE } else { FALSE }),
+                            _ => None,
+                        };
+
+                        if let Some(b) = bool_value {
+                            return Ok(b);
+                        }
+
+                        let value: u64 = match op {
+                            BinaryOp::AndAnd => a & b,
+                            BinaryOp::OrOr => a | b,
+                            BinaryOp::And => a & b,
+                            BinaryOp::Or => a | b,
+                            BinaryOp::Xor => a ^ b,
+                            BinaryOp::Xnor => !(a ^ b),
+                            BinaryOp::Times => a * b,
+                            BinaryOp::Divide => a / b,
+                            BinaryOp::Modulus => a % b,
+                            BinaryOp::Plus => a + b,
+                            BinaryOp::Minus => a - b,
+                            BinaryOp::Power => a.pow(b as u32),
+                            _ => unreachable!(),
+                        };
+                        Ok(Integer { width, value })
+                    }
+                    ConstantExprContinue::TernaryOp(b, c, cont) => {
+                        let a = val;
+                        if a.width != 1 {
+                            bail!("Cannot use non-boolean value as ternary condition");
+                        }
+                        let b = self.evaluate_constant_expr_int(b.as_ref())?;
+                        let c = self.evaluate_constant_expr_int(c.as_ref())?;
+                        if a == TRUE {
+                            self.evaluate_constant_expr_cont_int(b, cont)
+                        } else {
+                            self.evaluate_constant_expr_cont_int(c, cont)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn evaluate_primary_literal_int(&self, p: &PrimaryLiteral) -> Result<Integer, anyhow::Error> {
+        let value = match p {
+            PrimaryLiteral::Number(n) => Integer {
+                width: 32,
+                value: *n,
+            },
+            PrimaryLiteral::Bits(b) => Integer {
+                width: b.w() as u8,
+                value: b.val(),
+            },
+            _ => bail!("Unsupported literal in integer evaluation context: {:?}", p),
+        };
+        Ok(value)
+    }
+
+    fn evaluate_constant_primary_base_int(
+        &self,
+        base: &ConstantPrimaryBase,
+    ) -> Result<Integer, anyhow::Error> {
+        match base {
+            ConstantPrimaryBase::PrimaryLiteral(p) => self.evaluate_primary_literal_int(p),
+            ConstantPrimaryBase::ConstantExpr(c) => self.evaluate_constant_expr_int(c),
+            ConstantPrimaryBase::InstanceOrPropRef(_) => {
+                bail!("References not supported in integer context")
+            }
+            ConstantPrimaryBase::StructLiteral(_, _) => {
+                bail!("Struct literal not supported in integer context")
+            }
+            ConstantPrimaryBase::ArrayLiteral(_) => {
+                bail!("Array literal not supported in integer context")
+            }
+            ConstantPrimaryBase::SimpleTypeCast(_, _) => {
+                bail!("Simple type cast not supported in integer context")
+            }
+            ConstantPrimaryBase::BooleanCast(_) => {
+                bail!("Boolean type cast not supported in integer context")
+            }
+            ConstantPrimaryBase::ConstantConcat(_) => bail!("Integer concatenation not supported"),
+            ConstantPrimaryBase::ConstantMultipleConcat(_, _) => {
+                bail!("Integer multiple concatenation not supported")
+            }
+        }
+    }
+
+    fn evaluate_cast(
+        &self,
+        _value: Integer,
+        _expr: &ConstantExpr,
+    ) -> Result<Integer, anyhow::Error> {
+        bail!("Casting not supported");
+    }
+
+    fn evaluate_constant_primary_int(
+        &self,
+        prim: &ConstantPrimary,
+    ) -> Result<Integer, anyhow::Error> {
+        match prim {
+            ConstantPrimary::Base(base) => self.evaluate_constant_primary_base_int(base),
+            ConstantPrimary::Cast(base, cast) => {
+                let base = self.evaluate_constant_primary_base_int(base)?;
+                self.evaluate_cast(base, cast.as_ref())
+            }
+        }
+    }
+
+    fn evaluate_constant_expr_int(&self, expr: &ConstantExpr) -> Result<Integer, anyhow::Error> {
+        match expr {
+            ConstantExpr::ConstantPrimary(prim, cont) => {
+                let val = self.evaluate_constant_primary_int(prim)?;
+                self.evaluate_constant_expr_cont_int(val, cont)
+            }
+            ConstantExpr::UnaryOp(op, expr, cont) => {
+                let expr = self.evaluate_constant_expr_int(expr)?;
+                let width = expr.width;
+                let val = expr.value;
+                let new_val = match op {
+                    UnaryOp::LogicalNot => !val,
+                    UnaryOp::Plus => val,
+                    UnaryOp::Minus => (!val) + 1,
+                    UnaryOp::Not => !val,
+                    UnaryOp::And => bail!("Unsupported unary operation on integer: &"),
+                    UnaryOp::Nand => bail!("Unsupported unary operation on integer: ~&"),
+                    UnaryOp::Or => bail!("Unsupported unary operation on integer: |"),
+                    UnaryOp::Nor => bail!("Unsupported unary operation on integer: ~&"),
+                    UnaryOp::Xor => bail!("Unsupported unary operation on integer: ^"),
+                    UnaryOp::Xnor => bail!("Unsupported unary operation on integer: &"),
+                };
+                let val = Integer {
+                    width,
+                    value: new_val,
+                };
+                self.evaluate_constant_expr_cont_int(val, cont)
+            }
+        }
+    }
+
+    fn parse_enum(&self, e: &EnumDef) -> Result<Enum, anyhow::Error> {
+        let mut values = vec![];
+        let mut last_value: Option<Integer> = None;
+        for entry in e.body.iter() {
+            let val = match (&last_value, &entry.expr) {
+                (None, None) => Integer {
+                    width: 32,
+                    value: 0,
+                },
+                (Some(last_val), None) => last_val.add(1),
+                (_, Some(expr)) => self.evaluate_constant_expr_int(expr)?,
+            };
+            last_value = Some(val);
+            let val = EnumValue {
+                name: entry.id.clone(),
+                value: val,
+            };
+            values.push(val);
+        }
+        Ok(Enum {
+            name: e.id.clone(),
+            values,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -764,45 +959,51 @@ trait Component {
     fn as_field(&self) -> Option<&Field> {
         None
     }
+    fn name(&self) -> Option<&str>;
     fn component_type(&self) -> ComponentType;
-    fn parent(&self) -> Option<Rc<dyn Component>>;
+    fn parent(&self) -> Option<ComponentIdx>;
     fn width(&self) -> usize;
     fn offset(&self) -> usize;
-    fn fields(&self) -> &HashMap<String, Rc<Field>>;
+    fn fields(&self) -> &HashMap<String, ComponentIdx>;
     fn instances(&self) -> &[RegisterInstance];
 
-    fn children(&self) -> &[Rc<dyn Component>];
+    fn children(&self) -> &[ComponentIdx];
     fn enums(&self) -> &[Enum];
     fn properties(&self) -> &HashMap<String, StringOrInt>;
 }
 
+#[derive(Clone)]
 struct RegisterInstance {
     name: String,
     offset: Option<usize>,
     width: usize,
-    type_: Rc<dyn Component>,
+    type_: ComponentIdx,
 }
 
+#[derive(Clone, Default)]
 struct AddrMap {
     name: String,
     offset: usize,
     width: usize,
-    parent: Option<Rc<dyn Component>>,
-    children: Vec<Rc<dyn Component>>,
-    fields: HashMap<String, Rc<Field>>,
+    parent: Option<ComponentIdx>,
+    children: Vec<ComponentIdx>,
+    fields: HashMap<String, ComponentIdx>,
     instances: Vec<RegisterInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
 }
 
 impl Component for AddrMap {
+    fn name(&self) -> Option<&str> {
+        Some(&self.name)
+    }
     fn component_type(&self) -> ComponentType {
         ComponentType::AddrMap
     }
-    fn parent(&self) -> Option<Rc<dyn Component>> {
-        self.parent.clone()
+    fn parent(&self) -> Option<ComponentIdx> {
+        self.parent
     }
-    fn fields(&self) -> &HashMap<String, Rc<Field>> {
+    fn fields(&self) -> &HashMap<String, ComponentIdx> {
         &self.fields
     }
     fn width(&self) -> usize {
@@ -817,7 +1018,7 @@ impl Component for AddrMap {
         &self.instances
     }
 
-    fn children(&self) -> &[Rc<dyn Component>] {
+    fn children(&self) -> &[ComponentIdx] {
         &self.children
     }
 
@@ -835,7 +1036,7 @@ pub fn generate_tock_registers_from_file(file: &Path, addrmaps: &[&str]) -> anyh
     let root = Root::from_file(&src, file)?;
     println!("Found {} descriptions", root.descriptions.len());
 
-    let root_root = parse_root(&root)?;
+    let _root_root = RootRoot::parse(&root)?;
     for d in root.descriptions.iter() {
         match d {
             Description::ComponentDef(c) => match &c.def {
