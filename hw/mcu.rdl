@@ -1,3 +1,9 @@
+`include "el2_pic_ctrl.rdl"
+`include "flash_ctrl.rdl"
+`include "caliptra-ss/src/fuse_ctrl/data/otp_ctrl.rdl"
+`include "caliptra-ss/src/fuse_ctrl/data/otp_ctrl.rdl"
+`include "caliptra-ss/src/integration/rtl/soc_address_map.rdl"
+
 addrmap mcu {
     el2_pic_ctrl el2_pic_ctrl @ 0x6000_0000;
     flash_ctrl main_flash_ctrl @ 0x2000_8000;

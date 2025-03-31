@@ -547,6 +547,7 @@ impl RootRoot {
         name: &str,
         body: &ComponentBody,
     ) -> Result<AddrMap, anyhow::Error> {
+        println!("Adding addrmap {}", name);
         let mut addrmap = AddrMap {
             parent,
             name: name.to_string(),

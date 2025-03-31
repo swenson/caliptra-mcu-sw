@@ -2067,6 +2067,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "registers-systemrdl",
+ "winnow 0.7.4",
 ]
 
 [[package]]

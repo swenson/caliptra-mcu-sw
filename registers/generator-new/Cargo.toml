@@ -13,3 +13,4 @@ proc-macro2.workspace = true
 mcu-registers-systemrdl-new.workspace = true
 quote.workspace = true
 registers-systemrdl.workspace = true
+winnow.workspace = true
