@@ -2,15 +2,14 @@
 
 use anyhow::bail;
 use mcu_registers_systemrdl_new::ast::{
-    ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentDef, ComponentInsts,
-    ComponentType, ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase,
-    Description, EnumDef, ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment,
-    IdentityOrPropKeyword, PrimaryLiteral, PropAssignmentRhs, PropertyAssignment, Root, UnaryOp,
+    ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
+    ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
+    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
+    PrimaryLiteral, PropAssignmentRhs, PropertyAssignment, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
 use std::path::Path;
-use std::rc::Rc;
 
 #[allow(unused)]
 pub fn generate_tock_registers(input: &str, _addrmaps: &[&str]) -> anyhow::Result<String> {
@@ -263,28 +262,26 @@ impl RootRoot {
                     let e = self.parse_enum(e)?;
                     self.enums.push(e);
                 }
-                Description::ComponentDef(c) => match &c.def.t {
-                        ComponentType::AddrMap => {
-                            let addrmap = self.convert_addrmap(None, name, body)?;
-                            self.components.push(AllComponent::AddrMap(addrmap));
-                            self.children.push(self.components.len() - 1);
-                        }
-                        // ComponentType::Reg => {
-                        //     let reg = convert_reg(None, name, body);
-                        //     root_root.children.push(Rc::new(reg));
-                        // }
-                        // ComponentType::RegFile => {
-                        //     let regfile = convert_regfile(None, name, body);
-                        //     root_root.children.push(Rc::new(regfile));
-                        // }
-                        _ => {
-                            println!("Other component type: {:?}", t);
-                        }
-                        // if *t == ComponentType::AddrMap {
-                        //     println!("Component {:?} {}", t, name);
-                        // } else if *t == ComponentType::
+                Description::ComponentDef(c) => match c.def.type_ {
+                    ComponentType::AddrMap => {
+                        let name = c.def.name.as_deref().unwrap_or("anon");
+                        let addrmap = self.convert_addrmap(None, name, &c.def.body)?;
+                        self.components.push(AllComponent::AddrMap(addrmap));
+                        self.children.push(self.components.len() - 1);
                     }
-                    _ => {}
+                    // ComponentType::Reg => {
+                    //     let reg = convert_reg(None, name, body);
+                    //     root_root.children.push(Rc::new(reg));
+                    // }
+                    // ComponentType::RegFile => {
+                    //     let regfile = convert_regfile(None, name, body);
+                    //     root_root.children.push(Rc::new(regfile));
+                    // }
+                    t => {
+                        println!("Other component type: {:?}", t);
+                    } // if *t == ComponentType::AddrMap {
+                      //     println!("Component {:?} {}", t, name);
+                      // } else if *t == ComponentType::
                 },
                 _ => {}
             }
@@ -460,6 +457,11 @@ impl RootRoot {
                 let (field, _insts) =
                     self.convert_field(parent, component.def.name.as_deref(), body)?;
                 self.components.push(AllComponent::Field(field));
+                Ok(Some(self.components.len() - 1))
+            }
+            ComponentType::Reg => {
+                let reg = self.convert_reg(None, &name, body)?;
+                self.components.push(AllComponent::Reg(reg));
                 Ok(Some(self.components.len() - 1))
             }
             _ => bail!("Unsupported named component type: {:?}", t),
@@ -1017,16 +1019,17 @@ pub fn generate_tock_registers_from_file(file: &Path, addrmaps: &[&str]) -> anyh
     let _root_root = RootRoot::parse(&root)?;
     for d in root.descriptions.iter() {
         match d {
-            Description::ComponentDef(c) => match &c.def {
-                ComponentDef::Named(t, name, _, body) => {
-                    if *t == ComponentType::AddrMap && addrmaps.contains(&&**name) {
+            Description::ComponentDef(c) => {
+                let t = c.def.type_;
+                let name = c.def.name.clone();
+                if let Some(name) = name.as_deref() {
+                    let body = &c.def.body;
+                    if t == ComponentType::AddrMap && addrmaps.contains(&name) {
                         println!("Component {:?} {}", t, name);
-
                         enumerate_instances(&root, body);
                     }
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
