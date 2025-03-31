@@ -771,16 +771,26 @@ fn component_body_elem(i: &mut Tokens<'_>) -> Result<ComponentBodyElem> {
 
 // component_named_def ::= component_type id [ param_def ] component_body
 fn component_named_def(i: &mut Tokens<'_>) -> Result<ComponentDef> {
-    let (ct, id, pd, body) =
+    let (type_, name, param_def, body) =
         (component_type, identifier, opt(param_def), component_body).parse_next(i)?;
 
-    Ok(ComponentDef::Named(ct, id, pd, body))
+    Ok(ComponentDef {
+        type_,
+        name: Some(name),
+        param_def,
+        body,
+    })
 }
 
 // component_anon_def::= component_type component_body
 fn component_anon_def(i: &mut Tokens<'_>) -> Result<ComponentDef> {
-    let (ct, body) = (component_type, component_body).parse_next(i)?;
-    Ok(ComponentDef::Anon(ct, body))
+    let (type_, body) = (component_type, component_body).parse_next(i)?;
+    Ok(ComponentDef {
+        type_,
+        name: None,
+        param_def: None,
+        body,
+    })
 }
 
 // component_inst_type ::= external | internal

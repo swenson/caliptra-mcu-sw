@@ -390,9 +390,11 @@ pub enum ParamDef {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ComponentDef {
-    Named(ComponentType, String, Option<ParamDef>, ComponentBody),
-    Anon(ComponentType, ComponentBody),
+pub struct ComponentDef {
+    pub type_: ComponentType,
+    pub name: Option<String>,
+    pub param_def: Option<ParamDef>,
+    pub body: ComponentBody,
 }
 
 #[derive(Clone, Debug, PartialEq)]

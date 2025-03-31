@@ -263,25 +263,22 @@ impl RootRoot {
                     let e = self.parse_enum(e)?;
                     self.enums.push(e);
                 }
-                Description::ComponentDef(c) => match &c.def {
-                    ComponentDef::Named(t, name, _, body) => {
-                        match *t {
-                            ComponentType::AddrMap => {
-                                let addrmap = self.convert_addrmap(None, name, body)?;
-                                self.components.push(AllComponent::AddrMap(addrmap));
-                                self.children.push(self.components.len() - 1);
-                            }
-                            // ComponentType::Reg => {
-                            //     let reg = convert_reg(None, name, body);
-                            //     root_root.children.push(Rc::new(reg));
-                            // }
-                            // ComponentType::RegFile => {
-                            //     let regfile = convert_regfile(None, name, body);
-                            //     root_root.children.push(Rc::new(regfile));
-                            // }
-                            _ => {
-                                println!("Other component type: {:?}", t);
-                            }
+                Description::ComponentDef(c) => match &c.def.t {
+                        ComponentType::AddrMap => {
+                            let addrmap = self.convert_addrmap(None, name, body)?;
+                            self.components.push(AllComponent::AddrMap(addrmap));
+                            self.children.push(self.components.len() - 1);
+                        }
+                        // ComponentType::Reg => {
+                        //     let reg = convert_reg(None, name, body);
+                        //     root_root.children.push(Rc::new(reg));
+                        // }
+                        // ComponentType::RegFile => {
+                        //     let regfile = convert_regfile(None, name, body);
+                        //     root_root.children.push(Rc::new(regfile));
+                        // }
+                        _ => {
+                            println!("Other component type: {:?}", t);
                         }
                         // if *t == ComponentType::AddrMap {
                         //     println!("Component {:?} {}", t, name);
@@ -449,35 +446,23 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         component: &mcu_registers_systemrdl_new::ast::Component,
     ) -> Result<Option<ComponentIdx>, anyhow::Error> {
-        match &component.def {
-            ComponentDef::Named(t, name, _, body) => match *t {
-                ComponentType::AddrMap => {
-                    let addrmap = self.convert_addrmap(parent, name, body)?;
-                    self.components.push(AllComponent::AddrMap(addrmap));
-                    Ok(Some(self.components.len() - 1))
-                }
-                ComponentType::Signal => Ok(None),
-                ComponentType::Field => {
-                    let (field, _insts) = self.convert_field(parent, Some(name), body)?;
-                    self.components.push(AllComponent::Field(field));
-                    Ok(Some(self.components.len() - 1))
-                }
-                _ => bail!("Unsupported named component type: {:?}", t),
-            },
-            ComponentDef::Anon(t, body) => match *t {
-                ComponentType::AddrMap => {
-                    let addrmap = self.convert_addrmap(parent, "anon", body)?;
-                    self.components.push(AllComponent::AddrMap(addrmap));
-                    Ok(Some(self.components.len() - 1))
-                }
-                ComponentType::Signal => Ok(None),
-                ComponentType::Reg => {
-                    let reg = self.convert_reg(parent, "anon", body)?;
-                    self.components.push(AllComponent::Reg(reg));
-                    Ok(Some(self.components.len() - 1))
-                }
-                _ => bail!("Unsupported component type: {:?}", t),
-            },
+        let t = component.def.type_;
+        let name = component.def.name.clone().unwrap_or("anon".to_string());
+        let body = &component.def.body;
+        match t {
+            ComponentType::AddrMap => {
+                let addrmap = self.convert_addrmap(parent, &name, body)?;
+                self.components.push(AllComponent::AddrMap(addrmap));
+                Ok(Some(self.components.len() - 1))
+            }
+            ComponentType::Signal => Ok(None),
+            ComponentType::Field => {
+                let (field, _insts) =
+                    self.convert_field(parent, component.def.name.as_deref(), body)?;
+                self.components.push(AllComponent::Field(field));
+                Ok(Some(self.components.len() - 1))
+            }
+            _ => bail!("Unsupported named component type: {:?}", t),
         }
     }
 
@@ -486,25 +471,17 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         component: &mcu_registers_systemrdl_new::ast::Component,
     ) -> Result<Option<ComponentIdx>, anyhow::Error> {
-        match &component.def {
-            ComponentDef::Named(t, name, _, body) => match *t {
-                ComponentType::Field => {
-                    let (field, _insts) = self.convert_field(parent, Some(name), body)?;
-                    // TODO: add field instances
-                    self.components.push(AllComponent::Field(field));
-                    Ok(Some(self.components.len() - 1))
-                }
-                _ => bail!("Unsupported named component type: {:?}", t),
-            },
-            ComponentDef::Anon(t, body) => match *t {
-                ComponentType::Field => {
-                    let (field, _insts) = self.convert_field(parent, None, body)?;
-                    // TODO: add field instances
-                    self.components.push(AllComponent::Field(field));
-                    Ok(Some(self.components.len() - 1))
-                }
-                _ => bail!("Unsupported component type: {:?}", t),
-            },
+        let t = component.def.type_;
+        let name = component.def.name.clone();
+        let body = &component.def.body;
+        match t {
+            ComponentType::Field => {
+                let (field, _insts) = self.convert_field(parent, name.as_deref(), body)?;
+                // TODO: add field instances
+                self.components.push(AllComponent::Field(field));
+                Ok(Some(self.components.len() - 1))
+            }
+            _ => bail!("Unsupported named component type: {:?}", t),
         }
     }
 
