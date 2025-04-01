@@ -1013,9 +1013,10 @@ fn struct_literal_body(i: &mut Tokens<'_>) -> Result<Vec<StructLiteralElement>> 
     separated(0.., struct_literal_element, TokenKind::Comma).parse_next(i)
 }
 
-// array_literal_body ::= constant_expression { , constant_expression }
+// errata states that 0 is allowed
+// array_literal_body ::= [ constant_expression { , constant_expression } ]
 fn array_literal_body(i: &mut Tokens<'_>) -> Result<Vec<ConstantExpr>> {
-    separated(1.., constant_expr, TokenKind::Comma).parse_next(i)
+    separated(0.., constant_expr, TokenKind::Comma).parse_next(i)
 }
 
 // array_literal ::= '{ array_literal_body }

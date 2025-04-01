@@ -37,7 +37,7 @@ type ComponentIdx = usize;
 enum AllComponent {
     AddrMap(AddrMap),
     Reg(Register),
-    //RegFile(RegisterFile),
+    RegFile(RegisterFile),
     Field(Field),
 }
 
@@ -46,6 +46,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.name(),
             AllComponent::Reg(reg) => reg.name(),
+            AllComponent::RegFile(regfile) => regfile.name(),
             AllComponent::Field(field) => field.name(),
         }
     }
@@ -54,6 +55,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.component_type(),
             AllComponent::Reg(reg) => reg.component_type(),
+            AllComponent::RegFile(regfile) => regfile.component_type(),
             AllComponent::Field(field) => field.component_type(),
         }
     }
@@ -62,6 +64,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.parent(),
             AllComponent::Reg(reg) => reg.parent(),
+            AllComponent::RegFile(regfile) => regfile.parent(),
             AllComponent::Field(field) => field.parent(),
         }
     }
@@ -70,6 +73,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.width(),
             AllComponent::Reg(reg) => reg.width(),
+            AllComponent::RegFile(regfile) => regfile.width(),
             AllComponent::Field(field) => field.width(),
         }
     }
@@ -78,6 +82,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.offset(),
             AllComponent::Reg(reg) => reg.offset(),
+            AllComponent::RegFile(regfile) => regfile.offset(),
             AllComponent::Field(field) => field.offset(),
         }
     }
@@ -86,6 +91,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.fields(),
             AllComponent::Reg(reg) => reg.fields(),
+            AllComponent::RegFile(regfile) => regfile.fields(),
             AllComponent::Field(field) => field.fields(),
         }
     }
@@ -94,6 +100,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.instances(),
             AllComponent::Reg(reg) => reg.instances(),
+            AllComponent::RegFile(regfile) => regfile.instances(),
             AllComponent::Field(field) => field.instances(),
         }
     }
@@ -102,6 +109,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.children(),
             AllComponent::Reg(reg) => reg.children(),
+            AllComponent::RegFile(regfile) => regfile.children(),
             AllComponent::Field(field) => field.children(),
         }
     }
@@ -110,6 +118,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.enums(),
             AllComponent::Reg(reg) => reg.enums(),
+            AllComponent::RegFile(regfile) => regfile.enums(),
             AllComponent::Field(field) => field.enums(),
         }
     }
@@ -118,6 +127,7 @@ impl Component for AllComponent {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.properties(),
             AllComponent::Reg(reg) => reg.properties(),
+            AllComponent::RegFile(regfile) => regfile.properties(),
             AllComponent::Field(field) => field.properties(),
         }
     }
@@ -180,7 +190,7 @@ struct FieldInstance {
 #[derive(Clone)]
 struct Register {
     parent: Option<ComponentIdx>,
-    name: String,
+    name: Option<String>,
     fields: HashMap<String, ComponentIdx>,
     field_instances: Vec<FieldInstance>,
     enums: Vec<Enum>,
@@ -199,10 +209,66 @@ impl std::fmt::Debug for Register {
 
 impl Component for Register {
     fn name(&self) -> Option<&str> {
-        Some(&self.name)
+        self.name.as_deref()
     }
     fn component_type(&self) -> ComponentType {
         ComponentType::Reg
+    }
+    fn parent(&self) -> Option<ComponentIdx> {
+        self.parent
+    }
+    fn fields(&self) -> &HashMap<String, ComponentIdx> {
+        &self.fields
+    }
+    fn width(&self) -> usize {
+        0
+    }
+
+    fn offset(&self) -> usize {
+        0
+    }
+
+    fn instances(&self) -> &[RegisterInstance] {
+        &[]
+    }
+
+    fn children(&self) -> &[ComponentIdx] {
+        &[]
+    }
+    fn enums(&self) -> &[Enum] {
+        &[]
+    }
+    fn properties(&self) -> &HashMap<String, StringOrInt> {
+        &self.properties
+    }
+}
+
+#[derive(Clone)]
+struct RegisterFile {
+    parent: Option<ComponentIdx>,
+    name: String,
+    fields: HashMap<String, ComponentIdx>,
+    field_instances: Vec<FieldInstance>,
+    enums: Vec<Enum>,
+    properties: HashMap<String, StringOrInt>,
+}
+
+impl std::fmt::Debug for RegisterFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Register {{ field_instances: {:?}, properties: {:?} }}",
+            self.field_instances, self.properties
+        )
+    }
+}
+
+impl Component for RegisterFile {
+    fn name(&self) -> Option<&str> {
+        Some(&self.name)
+    }
+    fn component_type(&self) -> ComponentType {
+        ComponentType::RegFile
     }
     fn parent(&self) -> Option<ComponentIdx> {
         self.parent
@@ -296,13 +362,13 @@ impl RootRoot {
         body: &ComponentBody,
     ) -> Result<(Field, Vec<FieldInstance>), anyhow::Error> {
         let instances = vec![];
-        println!("Field {:?}", name);
+        //println!("Field {:?}", name);
         for elem in body.elements.iter() {
             match elem {
                 ComponentBodyElem::PropertyAssignment(pa) => {
                     //println!("Property assignment: {:?}", pa);
                     if let Some((key, value)) = self.evaluate_property(pa) {
-                        println!("Property {}: {}", key, value);
+                        //println!("Property {}: {}", key, value);
                     }
                 }
                 _ => todo!(),
@@ -322,14 +388,14 @@ impl RootRoot {
     fn convert_reg(
         &mut self,
         parent: Option<ComponentIdx>,
-        name: &str,
+        name: Option<&str>,
         body: &ComponentBody,
     ) -> Result<Register, anyhow::Error> {
         //println!("Reg {} body: {:?}", name, body);
 
         let mut reg = Register {
             parent,
-            name: name.to_string(),
+            name: name.map(|name| name.to_string()),
             fields: HashMap::new(),
             field_instances: vec![],
             enums: vec![],
@@ -358,6 +424,7 @@ impl RootRoot {
                             reg.field_instances.extend(new_insts);
                         }
                     }
+                    // TODO: check other kinds
                 }
                 ComponentBodyElem::EnumDef(enum_def) => {
                     let enum_ = self.parse_enum(enum_def)?;
@@ -392,6 +459,97 @@ impl RootRoot {
             }
         }
         Ok(reg)
+    }
+
+    fn convert_regfile(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        name: &str,
+        body: &ComponentBody,
+    ) -> Result<RegisterFile, anyhow::Error> {
+        //panic!("Regfile {} body: {:?}", name, body);
+        let mut regfile = RegisterFile {
+            parent,
+            name: name.to_string(),
+            fields: HashMap::new(),
+            field_instances: vec![],
+            enums: vec![],
+            properties: HashMap::new(),
+        };
+        for elem in body.elements.iter() {
+            match elem {
+                ComponentBodyElem::PropertyAssignment(pa) => {
+                    if let Some((key, value)) = self.evaluate_property(pa) {
+                        regfile.properties.insert(key, value);
+                    }
+                }
+                ComponentBodyElem::ComponentDef(component) => {
+                    println!("Component {:?} for regfile", component.def.name.as_deref());
+                    let comp = self.convert_component_field(parent, component)?;
+                    println!("Comp {:?}", comp);
+                    if let Some(comp_idx) = comp {
+                        let comp = &self.components[comp_idx];
+                        if let Some(name) = comp.name() {
+                            println!("\nInserting field {} into regfile", name);
+                            regfile.fields.insert(name.to_string(), comp_idx);
+                        }
+                        if component.insts.is_some() {
+                            let new_insts = self.convert_field_instances(
+                                comp_idx,
+                                component.insts.as_ref().unwrap(),
+                            )?;
+                            regfile.field_instances.extend(new_insts);
+                        }
+                    }
+                    let comp = self.convert_component_reg(parent, &component)?;
+                    if let Some(comp_idx) = comp {
+                        let comp = &self.components[comp_idx];
+                        if let Some(name) = comp.name() {
+                            println!("\nInserting field {} into regfile", name);
+                            regfile.fields.insert(name.to_string(), comp_idx);
+                        }
+                        if component.insts.is_some() {
+                            let new_insts = self.convert_field_instances(
+                                comp_idx,
+                                component.insts.as_ref().unwrap(),
+                            )?;
+                            regfile.field_instances.extend(new_insts);
+                        }
+                    }
+                }
+                ComponentBodyElem::EnumDef(enum_def) => {
+                    let enum_ = self.parse_enum(enum_def)?;
+                    regfile.enums.push(enum_);
+                }
+                ComponentBodyElem::ExplicitComponentInst(inst) => {
+                    // look in the register components first
+                    if regfile.fields.contains_key(&inst.id) {
+                        let field_idx = regfile.fields[&inst.id];
+                        let new_insts =
+                            self.convert_field_instances(field_idx, &inst.component_insts)?;
+                        regfile.field_instances.extend(new_insts);
+                    } else if regfile.enums.iter().find(|e| e.name == inst.id).is_some() {
+                        // found in enums
+                    } else if let Some(parent) = parent {
+                        // find in parent
+                        if let Some(component_idx) =
+                            self.find_component(&self.components[parent], &inst.id)
+                        {
+                            todo!()
+                        } else {
+                            todo!()
+                        }
+                    } else {
+                        bail!("Component {} not found in regfile scope {}", inst.id, name);
+                    }
+                }
+                _ => {
+                    println!("Unsupported element in regfile body: {:?}", elem);
+                    todo!()
+                }
+            }
+        }
+        Ok(regfile)
     }
 
     fn find_field(&self, src: &AllComponent, name: &str) -> Option<ComponentIdx> {
@@ -460,15 +618,20 @@ impl RootRoot {
                 Ok(Some(self.components.len() - 1))
             }
             ComponentType::Reg => {
-                let reg = self.convert_reg(None, &name, body)?;
+                let reg = self.convert_reg(None, Some(&name), body)?;
                 self.components.push(AllComponent::Reg(reg));
                 Ok(Some(self.components.len() - 1))
             }
-            _ => bail!("Unsupported named component type: {:?}", t),
+            ComponentType::RegFile => {
+                let regfile = self.convert_regfile(None, &name, body)?;
+                self.components.push(AllComponent::RegFile(regfile));
+                Ok(Some(self.components.len() - 1))
+            }
+            _ => bail!("Unsupported component type: {:?}", t),
         }
     }
 
-    fn convert_component_field<'a>(
+    fn convert_component_field(
         &mut self,
         parent: Option<ComponentIdx>,
         component: &mcu_registers_systemrdl_new::ast::Component,
@@ -483,7 +646,26 @@ impl RootRoot {
                 self.components.push(AllComponent::Field(field));
                 Ok(Some(self.components.len() - 1))
             }
-            _ => bail!("Unsupported named component type: {:?}", t),
+            _ => Ok(None),
+        }
+    }
+
+    fn convert_component_reg(
+        &mut self,
+        parent: Option<ComponentIdx>,
+        component: &mcu_registers_systemrdl_new::ast::Component,
+    ) -> Result<Option<ComponentIdx>, anyhow::Error> {
+        let t = component.def.type_;
+        let name = component.def.name.clone();
+        let body = &component.def.body;
+        match t {
+            ComponentType::Reg => {
+                let reg = self.convert_reg(parent, name.as_deref(), body)?;
+                // TODO: add reg instances
+                self.components.push(AllComponent::Reg(reg));
+                Ok(Some(self.components.len() - 1))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -590,7 +772,7 @@ impl RootRoot {
                 }
             }
         }
-        println!("Properties {}: {:?}", name, addrmap.properties);
+        //println!("Properties {}: {:?}", name, addrmap.properties);
         Ok(addrmap)
     }
 
