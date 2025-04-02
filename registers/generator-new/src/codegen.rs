@@ -50,6 +50,16 @@ enum AllComponent {
     Field(FieldType),
 }
 
+impl AllComponent {
+    fn as_addrmap(&mut self) -> Option<&mut AddrMapType> {
+        if let AllComponent::AddrMap(addrmap) = self {
+            Some(addrmap)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Instance {
     name: String,
@@ -331,9 +341,7 @@ impl World {
                 Description::ComponentDef(c) => match c.def.type_ {
                     ComponentType::AddrMap => {
                         let name = c.def.name.as_deref().unwrap_or("anon");
-                        let addrmap = self.convert_addrmap(None, name, &c.def.body)?;
-                        self.component_arena.push(AllComponent::AddrMap(addrmap));
-                        self.child_components.push(self.component_arena.len() - 1);
+                        self.add_addrmap(None, name, &c.def.body)?;
                     }
                     // ComponentType::Reg => {
                     //     let reg = convert_reg(None, name, body);
@@ -606,9 +614,8 @@ impl World {
         let body = &component.def.body;
         match t {
             ComponentType::AddrMap => {
-                let addrmap = self.convert_addrmap(parent, &name, body)?;
-                self.component_arena.push(AllComponent::AddrMap(addrmap));
-                Ok(Some(self.component_arena.len() - 1))
+                let idx = self.add_addrmap(parent, &name, body)?;
+                Ok(Some(idx))
             }
             ComponentType::Signal => Ok(None),
             ComponentType::Field => {
@@ -702,18 +709,28 @@ impl World {
         }
     }
 
-    fn convert_addrmap(
+    fn with_addrmap<T>(&mut self, idx: ComponentIdx, f: impl FnOnce(&mut AddrMapType) -> T) -> T {
+        if let AllComponent::AddrMap(addrmap) = &mut self.component_arena[idx] {
+            f(addrmap)
+        } else {
+            panic!("Not an addrmap");
+        }
+    }
+
+    fn add_addrmap(
         &mut self,
         parent: Option<ComponentIdx>,
         name: &str,
         body: &ComponentBody,
-    ) -> Result<AddrMapType, anyhow::Error> {
+    ) -> Result<ComponentIdx, anyhow::Error> {
         println!("Adding addrmap {}", name);
-        let mut addrmap = AddrMapType {
+        let addrmap = AddrMapType {
             parent,
             name: name.to_string(),
             ..Default::default()
         };
+        self.component_arena.push(AllComponent::AddrMap(addrmap));
+        let addrmap_idx = self.component_arena.len() - 1;
         for elem in body.elements.iter() {
             match elem {
                 ComponentBodyElem::ComponentDef(component) => {
@@ -727,12 +744,16 @@ impl World {
                                         comp_idx,
                                         component.insts.as_ref().unwrap(),
                                     )?;
-                                    addrmap.instances.extend(new_insts);
+                                    self.with_addrmap(addrmap_idx, |addrmap| {
+                                        addrmap.instances.extend(new_insts);
+                                    });
                                 }
                                 _ => {}
                             }
                         }
-                        addrmap.children.push(comp_idx);
+                        self.with_addrmap(addrmap_idx, |addrmap| {
+                            addrmap.children.push(comp_idx);
+                        });
                         // comp.clone().as_field().map(|f| {
                         //     if let Some(name) = &f.name {
                         //         println!("\nInserting field {} into map", name);
@@ -742,14 +763,17 @@ impl World {
                     }
                 }
                 ComponentBodyElem::EnumDef(enum_def) => {
-                    addrmap.enums.push(self.parse_enum(enum_def)?);
+                    let e = self.parse_enum(enum_def)?;
+                    self.with_addrmap(addrmap_idx, |addrmap| {
+                        addrmap.enums.push(e);
+                    });
                 }
                 ComponentBodyElem::StructDef(_struct_def) => todo!(),
                 ComponentBodyElem::ConstraintDef(_constraint_def) => todo!(),
                 ComponentBodyElem::ExplicitComponentInst(explicit_component_inst) => {
                     println!("Explicit component inst: {:?}", explicit_component_inst);
                     if let Some(component_idx) = self.find_component(
-                        &AllComponent::AddrMap(addrmap),
+                        &self.component_arena[addrmap_idx],
                         &explicit_component_inst.id,
                     ) {
                         println!(
@@ -767,13 +791,15 @@ impl World {
                 ComponentBodyElem::PropertyAssignment(property_assignment) => {
                     //println!("Property assignment: {:?}", property_assignment);
                     if let Some((key, value)) = self.evaluate_property(property_assignment) {
-                        addrmap.properties.insert(key, value);
+                        self.with_addrmap(addrmap_idx, |addrmap| {
+                            addrmap.properties.insert(key, value);
+                        });
                     }
                 }
             }
         }
         //println!("Properties {}: {:?}", name, addrmap.properties);
-        Ok(addrmap)
+        Ok(addrmap_idx)
     }
 
     fn convert_instances(
