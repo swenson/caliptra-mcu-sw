@@ -25,20 +25,41 @@ const TRUE: Integer = Integer { width: 1, value: 1 };
 const FALSE: Integer = Integer { width: 1, value: 0 };
 
 #[derive(Clone, Default)]
-struct RootRoot {
-    children: Vec<ComponentIdx>,
+struct World {
+    /// List of component children.
+    child_components: Vec<ComponentIdx>,
+    /// List of instance children.
+    child_instances: Vec<InstanceIdx>,
     enums: Vec<Enum>,
-    components: Vec<AllComponent>,
+    /// Holds all of the components so that they can be referenced by index.
+    /// They can be added but never deleted.
+    component_arena: Vec<AllComponent>,
+    /// Holds all of the instances so that they can be referenced by index.
+    /// They can be added but never deleted.
+    instance_arena: Vec<Instance>,
 }
 
 type ComponentIdx = usize;
+type InstanceIdx = usize;
 
 #[derive(Clone)]
 enum AllComponent {
-    AddrMap(AddrMap),
-    Reg(Register),
-    RegFile(RegisterFile),
-    Field(Field),
+    AddrMap(AddrMapType),
+    Reg(RegisterType),
+    RegFile(RegisterFileType),
+    Field(FieldType),
+}
+
+#[derive(Clone)]
+struct Instance {
+    name: String,
+    offset: usize,
+    width: usize,
+    desc: Option<String>,
+    array_size: Option<Vec<usize>>,
+    type_idx: ComponentIdx,
+    parent: Option<ComponentIdx>,
+    children: Vec<InstanceIdx>,
 }
 
 impl Component for AllComponent {
@@ -96,15 +117,6 @@ impl Component for AllComponent {
         }
     }
 
-    fn instances(&self) -> &[RegisterInstance] {
-        match self {
-            AllComponent::AddrMap(addrmap) => addrmap.instances(),
-            AllComponent::Reg(reg) => reg.instances(),
-            AllComponent::RegFile(regfile) => regfile.instances(),
-            AllComponent::Field(field) => field.instances(),
-        }
-    }
-
     fn children(&self) -> &[ComponentIdx] {
         match self {
             AllComponent::AddrMap(addrmap) => addrmap.children(),
@@ -134,18 +146,18 @@ impl Component for AllComponent {
 }
 
 #[derive(Clone)]
-struct Field {
+struct FieldType {
     parent: Option<ComponentIdx>,
     name: Option<String>,
     properties: HashMap<String, StringOrInt>,
     _fields: HashMap<String, ComponentIdx>, // just a placeholder
 }
 
-impl Component for Field {
+impl Component for FieldType {
     fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
-    fn as_field(&self) -> Option<&Field> {
+    fn as_field(&self) -> Option<&FieldType> {
         Some(self)
     }
     fn component_type(&self) -> ComponentType {
@@ -163,10 +175,6 @@ impl Component for Field {
 
     fn offset(&self) -> usize {
         0
-    }
-
-    fn instances(&self) -> &[RegisterInstance] {
-        &[]
     }
 
     fn children(&self) -> &[ComponentIdx] {
@@ -188,7 +196,7 @@ struct FieldInstance {
 }
 
 #[derive(Clone)]
-struct Register {
+struct RegisterType {
     parent: Option<ComponentIdx>,
     name: Option<String>,
     fields: HashMap<String, ComponentIdx>,
@@ -197,7 +205,7 @@ struct Register {
     properties: HashMap<String, StringOrInt>,
 }
 
-impl std::fmt::Debug for Register {
+impl std::fmt::Debug for RegisterType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -207,7 +215,7 @@ impl std::fmt::Debug for Register {
     }
 }
 
-impl Component for Register {
+impl Component for RegisterType {
     fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -228,10 +236,6 @@ impl Component for Register {
         0
     }
 
-    fn instances(&self) -> &[RegisterInstance] {
-        &[]
-    }
-
     fn children(&self) -> &[ComponentIdx] {
         &[]
     }
@@ -244,7 +248,7 @@ impl Component for Register {
 }
 
 #[derive(Clone)]
-struct RegisterFile {
+struct RegisterFileType {
     parent: Option<ComponentIdx>,
     name: String,
     fields: HashMap<String, ComponentIdx>,
@@ -253,7 +257,7 @@ struct RegisterFile {
     properties: HashMap<String, StringOrInt>,
 }
 
-impl std::fmt::Debug for RegisterFile {
+impl std::fmt::Debug for RegisterFileType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -263,7 +267,7 @@ impl std::fmt::Debug for RegisterFile {
     }
 }
 
-impl Component for RegisterFile {
+impl Component for RegisterFileType {
     fn name(&self) -> Option<&str> {
         Some(&self.name)
     }
@@ -282,10 +286,6 @@ impl Component for RegisterFile {
 
     fn offset(&self) -> usize {
         0
-    }
-
-    fn instances(&self) -> &[RegisterInstance] {
-        &[]
     }
 
     fn children(&self) -> &[ComponentIdx] {
@@ -314,11 +314,11 @@ impl std::fmt::Display for StringOrInt {
     }
 }
 
-impl RootRoot {
+impl World {
     pub fn parse(root: &Root) -> Result<Self, anyhow::Error> {
-        let mut root_root = RootRoot::default();
-        root_root.parse_root(root)?;
-        Ok(root_root)
+        let mut world = World::default();
+        world.parse_root(root)?;
+        Ok(world)
     }
 
     pub fn parse_root(&mut self, root: &Root) -> Result<(), anyhow::Error> {
@@ -332,8 +332,8 @@ impl RootRoot {
                     ComponentType::AddrMap => {
                         let name = c.def.name.as_deref().unwrap_or("anon");
                         let addrmap = self.convert_addrmap(None, name, &c.def.body)?;
-                        self.components.push(AllComponent::AddrMap(addrmap));
-                        self.children.push(self.components.len() - 1);
+                        self.component_arena.push(AllComponent::AddrMap(addrmap));
+                        self.child_components.push(self.component_arena.len() - 1);
                     }
                     // ComponentType::Reg => {
                     //     let reg = convert_reg(None, name, body);
@@ -360,7 +360,7 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         name: Option<&str>,
         body: &ComponentBody,
-    ) -> Result<(Field, Vec<FieldInstance>), anyhow::Error> {
+    ) -> Result<(FieldType, Vec<FieldInstance>), anyhow::Error> {
         let instances = vec![];
         //println!("Field {:?}", name);
         for elem in body.elements.iter() {
@@ -375,7 +375,7 @@ impl RootRoot {
             }
         }
         Ok((
-            Field {
+            FieldType {
                 parent,
                 name: name.map(|s| s.to_string()),
                 properties: HashMap::new(),
@@ -390,10 +390,10 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         name: Option<&str>,
         body: &ComponentBody,
-    ) -> Result<Register, anyhow::Error> {
+    ) -> Result<RegisterType, anyhow::Error> {
         //println!("Reg {} body: {:?}", name, body);
 
-        let mut reg = Register {
+        let mut reg = RegisterType {
             parent,
             name: name.map(|name| name.to_string()),
             fields: HashMap::new(),
@@ -411,7 +411,7 @@ impl RootRoot {
                 ComponentBodyElem::ComponentDef(component) => {
                     let comp = self.convert_component_field(parent, component)?;
                     if let Some(comp_idx) = comp {
-                        let comp = &self.components[comp_idx];
+                        let comp = &self.component_arena[comp_idx];
                         if let Some(name) = comp.name() {
                             println!("\nInserting field {} into reg", name);
                             reg.fields.insert(name.to_string(), comp_idx);
@@ -442,7 +442,7 @@ impl RootRoot {
                     } else if let Some(parent) = parent {
                         // find in parent
                         if let Some(component_idx) =
-                            self.find_component(&self.components[parent], &inst.id)
+                            self.find_component(&self.component_arena[parent], &inst.id)
                         {
                             todo!()
                         } else {
@@ -466,9 +466,9 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         name: &str,
         body: &ComponentBody,
-    ) -> Result<RegisterFile, anyhow::Error> {
+    ) -> Result<RegisterFileType, anyhow::Error> {
         //panic!("Regfile {} body: {:?}", name, body);
-        let mut regfile = RegisterFile {
+        let mut regfile = RegisterFileType {
             parent,
             name: name.to_string(),
             fields: HashMap::new(),
@@ -488,7 +488,7 @@ impl RootRoot {
                     let comp = self.convert_component_field(parent, component)?;
                     println!("Comp {:?}", comp);
                     if let Some(comp_idx) = comp {
-                        let comp = &self.components[comp_idx];
+                        let comp = &self.component_arena[comp_idx];
                         if let Some(name) = comp.name() {
                             println!("\nInserting field {} into regfile", name);
                             regfile.fields.insert(name.to_string(), comp_idx);
@@ -503,7 +503,7 @@ impl RootRoot {
                     }
                     let comp = self.convert_component_reg(parent, &component)?;
                     if let Some(comp_idx) = comp {
-                        let comp = &self.components[comp_idx];
+                        let comp = &self.component_arena[comp_idx];
                         if let Some(name) = comp.name() {
                             println!("\nInserting field {} into regfile", name);
                             regfile.fields.insert(name.to_string(), comp_idx);
@@ -533,7 +533,7 @@ impl RootRoot {
                     } else if let Some(parent) = parent {
                         // find in parent
                         if let Some(component_idx) =
-                            self.find_component(&self.components[parent], &inst.id)
+                            self.find_component(&self.component_arena[parent], &inst.id)
                         {
                             todo!()
                         } else {
@@ -556,7 +556,7 @@ impl RootRoot {
         if let Some(f) = src.fields().get(name) {
             Some(f.clone())
         } else if let Some(parent) = src.parent() {
-            self.find_field(&self.components[parent], name)
+            self.find_field(&self.component_arena[parent], name)
         } else {
             None
         }
@@ -607,25 +607,25 @@ impl RootRoot {
         match t {
             ComponentType::AddrMap => {
                 let addrmap = self.convert_addrmap(parent, &name, body)?;
-                self.components.push(AllComponent::AddrMap(addrmap));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::AddrMap(addrmap));
+                Ok(Some(self.component_arena.len() - 1))
             }
             ComponentType::Signal => Ok(None),
             ComponentType::Field => {
                 let (field, _insts) =
                     self.convert_field(parent, component.def.name.as_deref(), body)?;
-                self.components.push(AllComponent::Field(field));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::Field(field));
+                Ok(Some(self.component_arena.len() - 1))
             }
             ComponentType::Reg => {
                 let reg = self.convert_reg(None, Some(&name), body)?;
-                self.components.push(AllComponent::Reg(reg));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::Reg(reg));
+                Ok(Some(self.component_arena.len() - 1))
             }
             ComponentType::RegFile => {
                 let regfile = self.convert_regfile(None, &name, body)?;
-                self.components.push(AllComponent::RegFile(regfile));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::RegFile(regfile));
+                Ok(Some(self.component_arena.len() - 1))
             }
             _ => bail!("Unsupported component type: {:?}", t),
         }
@@ -643,8 +643,8 @@ impl RootRoot {
             ComponentType::Field => {
                 let (field, _insts) = self.convert_field(parent, name.as_deref(), body)?;
                 // TODO: add field instances
-                self.components.push(AllComponent::Field(field));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::Field(field));
+                Ok(Some(self.component_arena.len() - 1))
             }
             _ => Ok(None),
         }
@@ -662,8 +662,8 @@ impl RootRoot {
             ComponentType::Reg => {
                 let reg = self.convert_reg(parent, name.as_deref(), body)?;
                 // TODO: add reg instances
-                self.components.push(AllComponent::Reg(reg));
-                Ok(Some(self.components.len() - 1))
+                self.component_arena.push(AllComponent::Reg(reg));
+                Ok(Some(self.component_arena.len() - 1))
             }
             _ => Ok(None),
         }
@@ -676,7 +676,7 @@ impl RootRoot {
             src.children().len()
         );
         for child_idx in src.children().iter().copied() {
-            let child = &self.components[child_idx];
+            let child = &self.component_arena[child_idx];
             println!("Check {:?} -> {:?}", src.name(), child.name());
             if child.name() == Some(name) {
                 return Some(child_idx);
@@ -684,14 +684,14 @@ impl RootRoot {
         }
         println!(
             "Parent {:?}",
-            src.parent().map(|p| self.components[p].name())
+            src.parent().map(|p| self.component_arena[p].name())
         );
         if let Some(parent) = src.parent() {
-            self.find_component(&self.components[parent], name)
+            self.find_component(&self.component_arena[parent], name)
         } else {
             // check root
-            for child_idx in self.children.iter().copied() {
-                let child = &self.components[child_idx];
+            for child_idx in self.child_components.iter().copied() {
+                let child = &self.component_arena[child_idx];
                 println!("Check {:?} -> {:?}", src.name(), child.name());
                 if child.name() == Some(name) {
                     return Some(child_idx);
@@ -707,9 +707,9 @@ impl RootRoot {
         parent: Option<ComponentIdx>,
         name: &str,
         body: &ComponentBody,
-    ) -> Result<AddrMap, anyhow::Error> {
+    ) -> Result<AddrMapType, anyhow::Error> {
         println!("Adding addrmap {}", name);
-        let mut addrmap = AddrMap {
+        let mut addrmap = AddrMapType {
             parent,
             name: name.to_string(),
             ..Default::default()
@@ -719,7 +719,7 @@ impl RootRoot {
                 ComponentBodyElem::ComponentDef(component) => {
                     let comp = self.convert_component(parent.clone(), component)?;
                     if let Some(comp_idx) = comp {
-                        let comp = &self.components[comp_idx];
+                        let comp = &self.component_arena[comp_idx];
                         if component.insts.is_some() {
                             match comp {
                                 AllComponent::Reg(_) => {
@@ -754,15 +754,15 @@ impl RootRoot {
                     ) {
                         println!(
                             "Found component: {:?}",
-                            self.components[component_idx].name()
+                            self.component_arena[component_idx].name()
                         );
+                        todo!()
                     } else {
                         bail!(
                             "Component {} not found in scope",
                             explicit_component_inst.id
                         );
                     }
-                    todo!()
                 }
                 ComponentBodyElem::PropertyAssignment(property_assignment) => {
                     //println!("Property assignment: {:?}", property_assignment);
@@ -1117,8 +1117,9 @@ struct Enum {
     values: Vec<EnumValue>,
 }
 
+/// Component is the type of an instance.
 trait Component {
-    fn as_field(&self) -> Option<&Field> {
+    fn as_field(&self) -> Option<&FieldType> {
         None
     }
     fn name(&self) -> Option<&str>;
@@ -1127,8 +1128,6 @@ trait Component {
     fn width(&self) -> usize;
     fn offset(&self) -> usize;
     fn fields(&self) -> &HashMap<String, ComponentIdx>;
-    fn instances(&self) -> &[RegisterInstance];
-
     fn children(&self) -> &[ComponentIdx];
     fn enums(&self) -> &[Enum];
     fn properties(&self) -> &HashMap<String, StringOrInt>;
@@ -1143,7 +1142,7 @@ struct RegisterInstance {
 }
 
 #[derive(Clone, Default)]
-struct AddrMap {
+struct AddrMapType {
     name: String,
     offset: usize,
     width: usize,
@@ -1155,7 +1154,7 @@ struct AddrMap {
     properties: HashMap<String, StringOrInt>,
 }
 
-impl Component for AddrMap {
+impl Component for AddrMapType {
     fn name(&self) -> Option<&str> {
         Some(&self.name)
     }
@@ -1176,10 +1175,6 @@ impl Component for AddrMap {
         self.offset
     }
 
-    fn instances(&self) -> &[RegisterInstance] {
-        &self.instances
-    }
-
     fn children(&self) -> &[ComponentIdx] {
         &self.children
     }
@@ -1198,7 +1193,7 @@ pub fn generate_tock_registers_from_file(file: &Path, addrmaps: &[&str]) -> anyh
     let root = Root::from_file(&src, file)?;
     println!("Found {} descriptions", root.descriptions.len());
 
-    let _root_root = RootRoot::parse(&root)?;
+    let _root_root = World::parse(&root)?;
     for d in root.descriptions.iter() {
         match d {
             Description::ComponentDef(c) => {
