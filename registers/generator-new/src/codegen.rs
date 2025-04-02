@@ -676,6 +676,7 @@ impl World {
         }
     }
 
+    /// Finds a component by name n the scope of the given component (and any parent scopes).
     fn find_component<'a>(&self, src: &AllComponent, name: &str) -> Option<ComponentIdx> {
         println!(
             "Checking {:?} {} children",
@@ -709,6 +710,7 @@ impl World {
         }
     }
 
+    /// Run a code block with the addrmap component at the given index.
     fn with_addrmap<T>(&mut self, idx: ComponentIdx, f: impl FnOnce(&mut AddrMapType) -> T) -> T {
         if let AllComponent::AddrMap(addrmap) = &mut self.component_arena[idx] {
             f(addrmap)
@@ -717,6 +719,7 @@ impl World {
         }
     }
 
+    /// Add an addrmap component to the world, returning the index of the new component.
     fn add_addrmap(
         &mut self,
         parent: Option<ComponentIdx>,
