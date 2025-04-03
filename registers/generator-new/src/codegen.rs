@@ -4,12 +4,15 @@ use anyhow::bail;
 use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
-    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
-    PrimaryLiteral, PropAssignmentRhs, PropertyAssignment, Root, UnaryOp,
+    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword, ParamDef,
+    ParamDefElem, ParamElem, PrimaryLiteral, PropAssignmentRhs, PropertyAssignment, PropertyType,
+    Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
 use std::path::Path;
+
+use crate::value::Value;
 
 #[allow(unused)]
 pub fn generate_tock_registers(input: &str, _addrmaps: &[&str]) -> anyhow::Result<String> {
@@ -28,8 +31,6 @@ const FALSE: Integer = Integer { width: 1, value: 0 };
 struct World {
     /// List of component children.
     child_components: Vec<ComponentIdx>,
-    /// List of instance children.
-    child_instances: Vec<InstanceIdx>,
     enums: Vec<Enum>,
     /// Holds all of the components so that they can be referenced by index.
     /// They can be added but never deleted.
@@ -70,6 +71,7 @@ struct Instance {
     type_idx: ComponentIdx,
     parent: Option<ComponentIdx>,
     children: Vec<InstanceIdx>,
+    parameters: HashMap<String, Value>,
 }
 
 impl Component for AllComponent {
@@ -153,14 +155,24 @@ impl Component for AllComponent {
             AllComponent::Field(field) => field.properties(),
         }
     }
+
+    fn parameters(&self) -> &HashMap<String, ParamDefElem> {
+        match self {
+            AllComponent::AddrMap(addrmap) => addrmap.parameters(),
+            AllComponent::Reg(reg) => reg.parameters(),
+            AllComponent::RegFile(regfile) => regfile.parameters(),
+            AllComponent::Field(field) => field.parameters(),
+        }
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct FieldType {
     parent: Option<ComponentIdx>,
     name: Option<String>,
     properties: HashMap<String, StringOrInt>,
     _fields: HashMap<String, ComponentIdx>, // just a placeholder
+    _parameters: HashMap<String, ParamDefElem>, // just a placeholder
 }
 
 impl Component for FieldType {
@@ -196,6 +208,9 @@ impl Component for FieldType {
     fn properties(&self) -> &HashMap<String, StringOrInt> {
         &self.properties
     }
+    fn parameters(&self) -> &HashMap<String, ParamDefElem> {
+        &self._parameters
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -205,7 +220,7 @@ struct FieldInstance {
     width: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct RegisterType {
     parent: Option<ComponentIdx>,
     name: Option<String>,
@@ -213,6 +228,7 @@ struct RegisterType {
     field_instances: Vec<FieldInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
+    parameters: HashMap<String, ParamDefElem>,
 }
 
 impl std::fmt::Debug for RegisterType {
@@ -255,9 +271,12 @@ impl Component for RegisterType {
     fn properties(&self) -> &HashMap<String, StringOrInt> {
         &self.properties
     }
+    fn parameters(&self) -> &HashMap<String, ParamDefElem> {
+        &self.parameters
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct RegisterFileType {
     parent: Option<ComponentIdx>,
     name: String,
@@ -265,6 +284,7 @@ struct RegisterFileType {
     field_instances: Vec<FieldInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
+    parameters: HashMap<String, ParamDefElem>,
 }
 
 impl std::fmt::Debug for RegisterFileType {
@@ -307,6 +327,9 @@ impl Component for RegisterFileType {
     fn properties(&self) -> &HashMap<String, StringOrInt> {
         &self.properties
     }
+    fn parameters(&self) -> &HashMap<String, ParamDefElem> {
+        &self.parameters
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -322,6 +345,17 @@ impl std::fmt::Display for StringOrInt {
             StringOrInt::Int(i) => write!(f, "{}", i.value),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Parameters {
+    params: HashMap<String, PrimaryLiteral>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterDefinition {
+    ty: PropertyType,
+    default: PrimaryLiteral,
 }
 
 impl World {
@@ -363,6 +397,16 @@ impl World {
         Ok(())
     }
 
+    fn eval_parameter(&self, instance_idx: InstanceIdx, value: &ConstantExpr) -> Value {
+        match value {
+            ConstantExpr::ConstantPrimary(constant_primary, constant_expr_continue) => {
+                self.eval_constant_primary_value(constant_primary);
+                todo!()
+            }
+            ConstantExpr::UnaryOp(unary_op, constant_expr, constant_expr_continue) => todo!(),
+        }
+    }
+
     fn convert_field(
         &self,
         parent: Option<ComponentIdx>,
@@ -386,8 +430,7 @@ impl World {
             FieldType {
                 parent,
                 name: name.map(|s| s.to_string()),
-                properties: HashMap::new(),
-                _fields: HashMap::new(),
+                ..Default::default()
             },
             instances,
         ))
@@ -404,10 +447,7 @@ impl World {
         let mut reg = RegisterType {
             parent,
             name: name.map(|name| name.to_string()),
-            fields: HashMap::new(),
-            field_instances: vec![],
-            enums: vec![],
-            properties: HashMap::new(),
+            ..Default::default()
         };
         for elem in body.elements.iter() {
             match elem {
@@ -479,10 +519,7 @@ impl World {
         let mut regfile = RegisterFileType {
             parent,
             name: name.to_string(),
-            fields: HashMap::new(),
-            field_instances: vec![],
-            enums: vec![],
-            properties: HashMap::new(),
+            ..Default::default()
         };
         for elem in body.elements.iter() {
             match elem {
@@ -997,6 +1034,73 @@ impl World {
         }
     }
 
+    fn evaluate_constant_expr_cont(
+        &self,
+        val: Value,
+        cont: &Option<Box<ConstantExprContinue>>,
+    ) -> Result<Value, anyhow::Error> {
+        match cont {
+            None => Ok(val),
+            Some(cont) => match cont.as_ref() {
+                ConstantExprContinue::BinaryOp(op, expr, _cont) => {
+                    let rhs = self.evaluate_constant_expr(expr.as_ref())?;
+                    match op {
+                        BinaryOp::AndAnd => val.try_andand(&rhs),
+                        BinaryOp::OrOr => val.try_oror(&rhs),
+                        BinaryOp::LessThan => val.try_lt(&rhs),
+                        BinaryOp::GreaterThan => val.try_gt(&rhs),
+                        BinaryOp::LessThanOrEqual => val.try_lte(&rhs),
+                        BinaryOp::GreaterThanOrEqual => val.try_gte(&rhs),
+                        BinaryOp::EqualsEquals => val.try_eq(&rhs),
+                        BinaryOp::NotEquals => val.try_neq(&rhs),
+                        BinaryOp::RightShift => val.try_rshift(&rhs),
+                        BinaryOp::LeftShift => val.try_lshift(&rhs),
+                        BinaryOp::And => val.try_and(&rhs),
+                        BinaryOp::Or => val.try_or(&rhs),
+                        BinaryOp::Xor => val.try_xor(&rhs),
+                        BinaryOp::Xnor => val.try_xnor(&rhs),
+                        BinaryOp::Times => val.try_times(&rhs),
+                        BinaryOp::Divide => val.try_divide(&rhs),
+                        BinaryOp::Modulus => val.try_modulus(&rhs),
+                        BinaryOp::Plus => val.try_add(&rhs),
+                        BinaryOp::Minus => val.try_sub(&rhs),
+                        BinaryOp::Power => val.try_pow(&rhs),
+                    }
+                }
+                ConstantExprContinue::TernaryOp(b, c, cont) => {
+                    if !val.is_bool() {
+                        bail!("Cannot use non-boolean value as ternary condition");
+                    }
+                    let b = self.evaluate_constant_expr(b.as_ref())?;
+                    let c = self.evaluate_constant_expr(c.as_ref())?;
+                    if val.as_bool() {
+                        self.evaluate_constant_expr_cont(b, cont)
+                    } else {
+                        self.evaluate_constant_expr_cont(c, cont)
+                    }
+                }
+            },
+        }
+    }
+
+    fn evaluate_primary_literal(&self, p: &PrimaryLiteral) -> Result<Value, anyhow::Error> {
+        let value = match p {
+            PrimaryLiteral::Number(n) => Value::U64(*n),
+            PrimaryLiteral::Bits(b) => Value::Bits(*b),
+            PrimaryLiteral::StringLiteral(s) => Value::String(s.clone()),
+            PrimaryLiteral::BooleanLiteral(b) => Value::Bool(*b),
+            PrimaryLiteral::AccessTypeLiteral(access_type) => Value::AccessType(*access_type),
+            PrimaryLiteral::OnReadTypeLiteral(on_read_type) => Value::OnReadType(*on_read_type),
+            PrimaryLiteral::OnWriteTypeLiteral(on_write_type) => Value::OnWriteType(*on_write_type),
+            PrimaryLiteral::AddressingTypeLiteral(addressing_type) => {
+                Value::AddressingType(*addressing_type)
+            }
+            PrimaryLiteral::EnumeratorLiteral(a, b) => Value::EnumReference(a.clone(), b.clone()),
+            PrimaryLiteral::This => bail!("'this' not supported in evaluation"),
+        };
+        Ok(value)
+    }
+
     fn evaluate_primary_literal_int(&self, p: &PrimaryLiteral) -> Result<Integer, anyhow::Error> {
         let value = match p {
             PrimaryLiteral::Number(n) => Integer {
@@ -1010,6 +1114,35 @@ impl World {
             _ => bail!("Unsupported literal in integer evaluation context: {:?}", p),
         };
         Ok(value)
+    }
+
+    fn evaluate_constant_primary_base(
+        &self,
+        base: &ConstantPrimaryBase,
+    ) -> Result<Value, anyhow::Error> {
+        match base {
+            ConstantPrimaryBase::PrimaryLiteral(p) => self.evaluate_primary_literal(p),
+            ConstantPrimaryBase::ConstantExpr(c) => self.evaluate_constant_expr(c),
+            ConstantPrimaryBase::InstanceOrPropRef(i) => self.evalutate_instance_or_prop_ref(i),
+            ConstantPrimaryBase::StructLiteral(_, _) => {
+                bail!("Struct literal not supported in evaluation")
+            }
+            ConstantPrimaryBase::ArrayLiteral(_) => {
+                bail!("Array literal not supported in evaluation")
+            }
+            ConstantPrimaryBase::SimpleTypeCast(_, _) => {
+                bail!("Simple type cast not supported in evaluation")
+            }
+            ConstantPrimaryBase::BooleanCast(_) => {
+                bail!("Boolean type cast not supported in evaluation")
+            }
+            ConstantPrimaryBase::ConstantConcat(_) => {
+                bail!("Concatenation not supported in evaluation")
+            }
+            ConstantPrimaryBase::ConstantMultipleConcat(_, _) => {
+                bail!("Multiple concatenation not supported in evaluation")
+            }
+        }
     }
 
     fn evaluate_constant_primary_base_int(
@@ -1058,6 +1191,34 @@ impl World {
             ConstantPrimary::Cast(base, cast) => {
                 let base = self.evaluate_constant_primary_base_int(base)?;
                 self.evaluate_cast(base, cast.as_ref())
+            }
+        }
+    }
+
+    fn evaluate_constant_expr(&self, expr: &ConstantExpr) -> Result<Value, anyhow::Error> {
+        match expr {
+            ConstantExpr::ConstantPrimary(prim, cont) => {
+                let val = self.evaluate_constant_primary_int(prim)?;
+                self.evaluate_constant_expr_cont(val, cont)
+            }
+            ConstantExpr::UnaryOp(op, expr, cont) => {
+                let expr = self.evaluate_constant_expr(expr)?;
+                if !expr.is_integral() {
+                    bail!("Unsupported unary operation on non-integral type: {:?}", op);
+                }
+                let new_val = match op {
+                    UnaryOp::LogicalNot => expr.logical_not(),
+                    UnaryOp::Plus => expr,
+                    UnaryOp::Minus => -expr,
+                    UnaryOp::Not => !expr,
+                    UnaryOp::And => bail!("Unsupported unary operation on integral type: &"),
+                    UnaryOp::Nand => bail!("Unsupported unary operation on integral type: ~&"),
+                    UnaryOp::Or => bail!("Unsupported unary operation on integral type: |"),
+                    UnaryOp::Nor => bail!("Unsupported unary operation on integral type: ~&"),
+                    UnaryOp::Xor => bail!("Unsupported unary operation on integral type: ^"),
+                    UnaryOp::Xnor => bail!("Unsupported unary operation on integral type: ~^"),
+                };
+                self.evaluate_constant_expr_cont(new_val, cont)
             }
         }
     }
@@ -1160,6 +1321,7 @@ trait Component {
     fn children(&self) -> &[ComponentIdx];
     fn enums(&self) -> &[Enum];
     fn properties(&self) -> &HashMap<String, StringOrInt>;
+    fn parameters(&self) -> &HashMap<String, ParamDefElem>;
 }
 
 #[derive(Clone)]
@@ -1181,6 +1343,7 @@ struct AddrMapType {
     instances: Vec<RegisterInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
+    parameters: HashMap<String, ParamDefElem>,
 }
 
 impl Component for AddrMapType {
@@ -1214,6 +1377,9 @@ impl Component for AddrMapType {
 
     fn properties(&self) -> &HashMap<String, StringOrInt> {
         &self.properties
+    }
+    fn parameters(&self) -> &HashMap<String, ParamDefElem> {
+        &self.parameters
     }
 }
 
