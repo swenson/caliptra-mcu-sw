@@ -4,9 +4,9 @@ use anyhow::bail;
 use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
-    ExplicitComponentInst, ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment,
-    IdentityOrPropKeyword, InstanceOrPropRef, ParamDefElem, ParamElem, PrimaryLiteral,
-    PropAssignmentRhs, PropertyAssignment, PropertyType, Root, UnaryOp,
+    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
+    InstanceOrPropRef, ParamDefElem, ParamElem, PrimaryLiteral, PropAssignmentRhs,
+    PropertyAssignment, PropertyType, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
@@ -18,10 +18,6 @@ use crate::value::Value;
 pub fn generate_tock_registers(input: &str, _addrmaps: &[&str]) -> anyhow::Result<String> {
     let root = mcu_registers_systemrdl_new::parse(input)?;
     Ok(format!("{:?}", root))
-}
-
-fn enumerate_instances(_root: &Root, _body: &ComponentBody) {
-    println!("Enumerating instances for root");
 }
 
 const TRUE: Integer = Integer { width: 1, value: 1 };
@@ -38,7 +34,6 @@ struct World {
     /// Holds all of the instances so that they can be referenced by index.
     /// They can be added but never deleted.
     instance_arena: Vec<Instance>,
-    child_instances: Vec<InstanceIdx>,
 }
 
 type ComponentIdx = usize;
@@ -394,7 +389,7 @@ impl World {
                     //     root_root.children.push(Rc::new(regfile));
                     // }
                     t => {
-                        println!("Other component type: {:?}", t);
+                        panic!("Other component type: {:?}", t);
                     } // if *t == ComponentType::AddrMap {
                       //     println!("Component {:?} {}", t, name);
                       // } else if *t == ComponentType::
@@ -946,35 +941,6 @@ impl World {
         }
         //println!("Properties {}: {:?}", name, addrmap.properties);
         Ok(addrmap_idx)
-    }
-
-    fn convert_instances(
-        &self,
-        reg: ComponentIdx,
-        insts: &ComponentInsts,
-    ) -> Result<Vec<RegisterInstance>, anyhow::Error> {
-        // println!(
-        //     "Converting instances for reg {:?}: {:?}",
-        //     reg.component_type(),
-        //     insts
-        // );
-        let mut instances = vec![];
-        for inst in insts.component_insts.iter() {
-            let offset = if let Some(eq) = &inst.equals {
-                Some(self.evaluate_constant_expr_int(&eq)?.value as usize)
-            } else {
-                None
-            };
-            // TODO: support regwidth
-            let inst = RegisterInstance {
-                name: inst.id.clone(),
-                offset,
-                width: 32,
-                type_: reg,
-            };
-            instances.push(inst);
-        }
-        Ok(instances)
     }
 
     fn evaluate_property(
