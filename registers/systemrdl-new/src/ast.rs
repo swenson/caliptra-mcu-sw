@@ -343,6 +343,18 @@ pub enum PropMod {
     NonSticky,
 }
 
+impl ToString for PropMod {
+    fn to_string(&self) -> String {
+        match self {
+            PropMod::PosEdge => "posedge".to_string(),
+            PropMod::NegEdge => "negedge".to_string(),
+            PropMod::BothEdge => "bothedge".to_string(),
+            PropMod::Level => "level".to_string(),
+            PropMod::NonSticky => "nonsticky".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExplicitOrDefaultPropAssignment {
     ExplicitPropModifier(Option<DefaultKeyword>, ExplicitPropModifier),

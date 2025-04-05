@@ -5,8 +5,8 @@ use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
     ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
-    InstanceOrPropRef, ParamDefElem, ParamElem, PrimaryLiteral, PropAssignmentRhs,
-    PropertyAssignment, PropertyType, Root, UnaryOp,
+    InstanceOrPropRef, ParamDefElem, ParamElem, PostPropAssignment, PrimaryLiteral,
+    PropAssignmentRhs, PropRef, PropertyAssignment, PropertyType, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
@@ -375,25 +375,35 @@ impl World {
                     let e = self.parse_enum(e)?;
                     self.enums.push(e);
                 }
-                Description::ComponentDef(c) => match c.def.type_ {
-                    ComponentType::AddrMap => {
-                        let name = c.def.name.as_deref().unwrap_or("anon");
-                        self.add_addrmap(None, name, &c.def.body)?;
+                Description::ComponentDef(c) => {
+                    if c.insts.is_some() {
+                        panic!("Cannot instantiate outside of addrmap");
                     }
-                    // ComponentType::Reg => {
-                    //     let reg = convert_reg(None, name, body);
-                    //     root_root.children.push(Rc::new(reg));
-                    // }
-                    // ComponentType::RegFile => {
-                    //     let regfile = convert_regfile(None, name, body);
-                    //     root_root.children.push(Rc::new(regfile));
-                    // }
-                    t => {
-                        panic!("Other component type: {:?}", t);
-                    } // if *t == ComponentType::AddrMap {
-                      //     println!("Component {:?} {}", t, name);
-                      // } else if *t == ComponentType::
-                },
+                    match c.def.type_ {
+                        ComponentType::AddrMap => {
+                            let name = c.def.name.as_deref().unwrap_or("anon");
+                            self.add_addrmap(None, name, &c.def.body)?;
+                        }
+                        // ComponentType::Reg => {
+                        //     let reg = convert_reg(None, name, body);
+                        //     root_root.children.push(Rc::new(reg));
+                        // }
+                        ComponentType::RegFile => {
+                            c.def.name.as_deref().map(|name| {
+                                println!("Regfile name: {}", name);
+                            });
+                            let name = c.def.name.as_deref().unwrap_or("anon");
+                            let regfile = self.convert_regfile(None, name, &c.def.body)?;
+                            self.component_arena.push(AllComponent::RegFile(regfile));
+                            self.child_components.push(self.component_arena.len() - 1);
+                        }
+                        t => {
+                            panic!("Other component type: {:?}", t);
+                        } // if *t == ComponentType::AddrMap {
+                          //     println!("Component {:?} {}", t, name);
+                          // } else if *t == ComponentType::
+                    }
+                }
                 _ => {}
             }
         }
@@ -950,9 +960,12 @@ impl World {
         match property_assignment {
             PropertyAssignment::ExplicitOrDefaultPropAssignment(pa) => match pa {
                 ExplicitOrDefaultPropAssignment::ExplicitPropModifier(
-                    _default_keyword,
-                    _explicit_prop_modifier,
-                ) => todo!(),
+                    default_keyword,
+                    explicit_prop_modifier,
+                ) => Some((
+                    explicit_prop_modifier.id.clone(),
+                    StringOrInt::String(explicit_prop_modifier.prop_mod.to_string()),
+                )),
                 ExplicitOrDefaultPropAssignment::ExplicitPropAssignment(_default, epa) => match epa
                 {
                     ExplicitPropertyAssignment::Assignment(
@@ -977,7 +990,7 @@ impl World {
                                         .ok()),
                                 PropAssignmentRhs::PrecedenceType(_precedence_type) => todo!(),
                             },
-                            None => todo!(),
+                            None => None,
                         };
                         rhs.map(|rhs| (id.clone(), rhs))
                     }
@@ -986,7 +999,41 @@ impl World {
                     }
                 },
             },
-            PropertyAssignment::PostPropAssignment(_post_prop_assignment) => todo!(),
+            PropertyAssignment::PostPropAssignment(post_prop_assignment) => {
+                // dynamic assignment
+                match post_prop_assignment {
+                    PostPropAssignment::PropRef(prop_ref, prop_assignment_rhs) => {
+                        // ignoring for now
+                        // TODO: support dynamic assignment
+                        None
+                        // if !prop_ref.iref.elements.is_empty() {
+                        //     panic!("iref elements = {:?}", prop_ref.iref.elements);
+                        // }
+                        // let id = match &prop_ref.id_or_prop {
+                        //     IdentityOrPropKeyword::Id(id) => id.clone(),
+                        //     IdentityOrPropKeyword::PropKeyword(prop_keyword) => {
+                        //         prop_keyword.to_string()
+                        //     }
+                        // };
+                        // let rhs = match prop_assignment_rhs {
+                        //     Some(rhs) => match rhs {
+                        //         PropAssignmentRhs::ConstantExpr(constant_expr) => self
+                        //             .evaluate_constant_expr_str(constant_expr)
+                        //             .ok()
+                        //             .map(StringOrInt::String)
+                        //             .or(self
+                        //                 .evaluate_constant_expr_int(constant_expr)
+                        //                 .map(StringOrInt::Int)
+                        //                 .ok()),
+                        //         PropAssignmentRhs::PrecedenceType(_precedence_type) => todo!(),
+                        //     },
+                        //     None => None,
+                        // };
+                        // rhs.map(|rhs| (id, rhs))
+                    }
+                    PostPropAssignment::PostEncodeAssignment(_post_encode_assignment) => todo!(),
+                }
+            }
         }
     }
 
