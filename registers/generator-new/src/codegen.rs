@@ -5,8 +5,8 @@ use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
     ExplicitComponentInst, ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment,
-    IdentityOrPropKeyword, InstanceOrPropRef, ParamDefElem, PrimaryLiteral, PropAssignmentRhs,
-    PropertyAssignment, PropertyType, Root, UnaryOp,
+    IdentityOrPropKeyword, InstanceOrPropRef, ParamDefElem, ParamElem, PrimaryLiteral,
+    PropAssignmentRhs, PropertyAssignment, PropertyType, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
@@ -38,6 +38,7 @@ struct World {
     /// Holds all of the instances so that they can be referenced by index.
     /// They can be added but never deleted.
     instance_arena: Vec<Instance>,
+    child_instances: Vec<InstanceIdx>,
 }
 
 type ComponentIdx = usize;
@@ -52,7 +53,14 @@ enum AllComponent {
 }
 
 impl AllComponent {
-    fn as_addrmap(&mut self) -> Option<&mut AddrMapType> {
+    fn as_addrmap_mut(&mut self) -> Option<&mut AddrMapType> {
+        if let AllComponent::AddrMap(addrmap) = self {
+            Some(addrmap)
+        } else {
+            None
+        }
+    }
+    fn as_addrmap(&self) -> Option<&AddrMapType> {
         if let AllComponent::AddrMap(addrmap) = self {
             Some(addrmap)
         } else {
@@ -61,7 +69,7 @@ impl AllComponent {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Instance {
     name: String,
     offset: usize,
@@ -397,7 +405,11 @@ impl World {
         Ok(())
     }
 
-    fn eval_parameter(&self, instance_idx: InstanceIdx, value: &ConstantExpr) -> Value {
+    fn eval_parameter(
+        &self,
+        component_idx: Option<ComponentIdx>,
+        value: &ConstantExpr,
+    ) -> Result<Value, anyhow::Error> {
         match value {
             ConstantExpr::ConstantPrimary(constant_primary, constant_expr_continue) => {
                 self.eval_constant_primary_value(constant_primary);
@@ -480,24 +492,29 @@ impl World {
                 }
                 ComponentBodyElem::ExplicitComponentInst(inst) => {
                     // look in the register components first
-                    if reg.fields.contains_key(&inst.id) {
-                        let field_idx = reg.fields[&inst.id];
+                    if reg.fields.contains_key(&inst.component_name) {
+                        let field_idx = reg.fields[&inst.component_name];
                         let new_insts =
                             self.convert_field_instances(field_idx, &inst.component_insts)?;
                         reg.field_instances.extend(new_insts);
-                    } else if reg.enums.iter().find(|e| e.name == inst.id).is_some() {
+                    } else if reg
+                        .enums
+                        .iter()
+                        .find(|e| e.name == inst.component_name)
+                        .is_some()
+                    {
                         // found in enums
                     } else if let Some(parent) = parent {
                         // find in parent
                         if let Some(component_idx) =
-                            self.find_component(&self.component_arena[parent], &inst.id)
+                            self.find_component(&self.component_arena[parent], &inst.component_name)
                         {
                             todo!()
                         } else {
                             todo!()
                         }
                     } else {
-                        bail!("Component {} not found in scope", inst.id);
+                        bail!("Component {} not found in scope", inst.component_name);
                     }
                 }
                 _ => {
@@ -568,24 +585,33 @@ impl World {
                 }
                 ComponentBodyElem::ExplicitComponentInst(inst) => {
                     // look in the register components first
-                    if regfile.fields.contains_key(&inst.id) {
-                        let field_idx = regfile.fields[&inst.id];
+                    if regfile.fields.contains_key(&inst.component_name) {
+                        let field_idx = regfile.fields[&inst.component_name];
                         let new_insts =
                             self.convert_field_instances(field_idx, &inst.component_insts)?;
                         regfile.field_instances.extend(new_insts);
-                    } else if regfile.enums.iter().find(|e| e.name == inst.id).is_some() {
+                    } else if regfile
+                        .enums
+                        .iter()
+                        .find(|e| e.name == inst.component_name)
+                        .is_some()
+                    {
                         // found in enums
                     } else if let Some(parent) = parent {
                         // find in parent
                         if let Some(component_idx) =
-                            self.find_component(&self.component_arena[parent], &inst.id)
+                            self.find_component(&self.component_arena[parent], &inst.component_name)
                         {
                             todo!()
                         } else {
                             todo!()
                         }
                     } else {
-                        bail!("Component {} not found in regfile scope {}", inst.id, name);
+                        bail!(
+                            "Component {} not found in regfile scope {}",
+                            inst.component_name,
+                            name
+                        );
                     }
                 }
                 _ => {
@@ -641,35 +667,103 @@ impl World {
         Ok(instances)
     }
 
+    fn eval_params(
+        &self,
+        component_idx: Option<ComponentIdx>,
+        param_insts: &[ParamElem],
+    ) -> Result<HashMap<String, Value>, anyhow::Error> {
+        // collect parameters
+        let mut params = HashMap::new();
+        for param in param_insts.iter() {
+            let name = param.id.clone();
+            let value = self.eval_parameter(component_idx, &param.param_value)?;
+            params.insert(name, value);
+        }
+        Ok(params)
+    }
+
     fn convert_component(
         &mut self,
         parent: Option<ComponentIdx>,
         component: &mcu_registers_systemrdl_new::ast::Component,
-    ) -> Result<Option<ComponentIdx>, anyhow::Error> {
+    ) -> Result<(Option<ComponentIdx>, Vec<InstanceIdx>), anyhow::Error> {
         let t = component.def.type_;
         let name = component.def.name.clone().unwrap_or("anon".to_string());
         let body = &component.def.body;
+
         match t {
             ComponentType::AddrMap => {
-                let idx = self.add_addrmap(parent, &name, body)?;
-                Ok(Some(idx))
+                let component_idx = self.add_addrmap(parent, &name, body)?;
+                let mut insts: Vec<_> = vec![];
+                if let Some(component_insts) = component.insts.as_ref() {
+                    let params = self.eval_params(parent, &*component_insts.param_insts)?;
+                    for inst in component_insts.component_insts.iter() {
+                        // TODO: handle offsets
+                        self.instance_arena.push(Instance {
+                            name: inst.id.clone(),
+                            type_idx: component_idx,
+                            parent,
+                            parameters: params.clone(),
+                            ..Default::default()
+                        });
+                        let inst_idx = self.instance_arena.len() - 1;
+                        insts.push(inst_idx);
+                    }
+                }
+                Ok((Some(component_idx), insts))
             }
-            ComponentType::Signal => Ok(None),
+            ComponentType::Signal => Ok((None, vec![])),
             ComponentType::Field => {
                 let (field, _insts) =
                     self.convert_field(parent, component.def.name.as_deref(), body)?;
                 self.component_arena.push(AllComponent::Field(field));
-                Ok(Some(self.component_arena.len() - 1))
+                let component_idx = self.component_arena.len() - 1;
+                // we don't care about fields for the purposes of instances
+                Ok((Some(component_idx), vec![]))
             }
             ComponentType::Reg => {
                 let reg = self.convert_reg(None, Some(&name), body)?;
                 self.component_arena.push(AllComponent::Reg(reg));
-                Ok(Some(self.component_arena.len() - 1))
+                let component_idx = self.component_arena.len() - 1;
+                let mut insts: Vec<_> = vec![];
+                if let Some(component_insts) = component.insts.as_ref() {
+                    let params = self.eval_params(parent, &*component_insts.param_insts)?;
+                    for inst in component_insts.component_insts.iter() {
+                        // TODO: handle offsets
+                        self.instance_arena.push(Instance {
+                            name: inst.id.clone(),
+                            type_idx: component_idx,
+                            parent,
+                            parameters: params.clone(),
+                            ..Default::default()
+                        });
+                        let inst_idx = self.instance_arena.len() - 1;
+                        insts.push(inst_idx);
+                    }
+                }
+                Ok((Some(component_idx), insts))
             }
             ComponentType::RegFile => {
                 let regfile = self.convert_regfile(None, &name, body)?;
                 self.component_arena.push(AllComponent::RegFile(regfile));
-                Ok(Some(self.component_arena.len() - 1))
+                let component_idx = self.component_arena.len() - 1;
+                let mut insts: Vec<_> = vec![];
+                if let Some(component_insts) = component.insts.as_ref() {
+                    let params = self.eval_params(parent, &*component_insts.param_insts)?;
+                    for inst in component_insts.component_insts.iter() {
+                        // TODO: handle offsets
+                        self.instance_arena.push(Instance {
+                            name: inst.id.clone(),
+                            type_idx: component_idx,
+                            parent,
+                            parameters: params.clone(),
+                            ..Default::default()
+                        });
+                        let inst_idx = self.instance_arena.len() - 1;
+                        insts.push(inst_idx);
+                    }
+                }
+                Ok((Some(component_idx), insts))
             }
             _ => bail!("Unsupported component type: {:?}", t),
         }
@@ -771,29 +865,16 @@ impl World {
         };
         self.component_arena.push(AllComponent::AddrMap(addrmap));
         let addrmap_idx = self.component_arena.len() - 1;
+        self.child_components.push(addrmap_idx);
         for elem in body.elements.iter() {
             match elem {
                 ComponentBodyElem::ComponentDef(component) => {
-                    let comp = self.convert_component(parent.clone(), component)?;
+                    let (comp, instances) = self.convert_component(parent.clone(), component)?;
                     if let Some(comp_idx) = comp {
-                        let comp = &self.component_arena[comp_idx];
-                        if component.insts.is_some() {
-                            match comp {
-                                AllComponent::Reg(_) => {
-                                    let new_insts = self.convert_instances(
-                                        comp_idx,
-                                        component.insts.as_ref().unwrap(),
-                                    )?;
-                                    self.with_addrmap(addrmap_idx, |addrmap| {
-                                        addrmap.instances.extend(new_insts);
-                                    });
-                                }
-                                _ => {}
-                            }
-                        }
                         self.with_addrmap(addrmap_idx, |addrmap| {
                             addrmap.children.push(comp_idx);
                         });
+                        let comp = &self.component_arena[comp_idx];
                         // comp.clone().as_field().map(|f| {
                         //     if let Some(name) = &f.name {
                         //         println!("\nInserting field {} into map", name);
@@ -811,51 +892,47 @@ impl World {
                 ComponentBodyElem::StructDef(_struct_def) => todo!(),
                 ComponentBodyElem::ConstraintDef(_constraint_def) => todo!(),
                 ComponentBodyElem::ExplicitComponentInst(explicit_component_inst) => {
-                    // println!("Explicit component inst: {:?}", explicit_component_inst);
-                    // if let Some(component_idx) = self.find_component(
-                    //     &self.component_arena[addrmap_idx],
-                    //     &explicit_component_inst.id,
-                    // ) {
-                    //     println!(
-                    //         "Found component: {:?}",
-                    //         self.component_arena[component_idx].name()
-                    //     );
+                    println!("Explicit component inst: {:?}", explicit_component_inst);
+                    if let Some(component_idx) = self.find_component(
+                        &self.component_arena[addrmap_idx],
+                        &explicit_component_inst.component_name,
+                    ) {
+                        println!(
+                            "Found component: {:?}",
+                            self.component_arena[component_idx].name()
+                        );
 
-                    //     // collectparameters
-                    //     for param in explicit_component_inst.component_insts.param_insts.iter() {
+                        // collect parameters
+                        let params = self.eval_params(
+                            Some(component_idx),
+                            &explicit_component_inst.component_insts.param_insts,
+                        )?;
 
-                    //         self.eval_parameter(instance_idx, value)
-                    //         todo!();
-                    //     }
-
-                    //     for inst in explicit_component_inst.component_insts.component_insts.iter() {
-                    //         inst.at
-                    //         self.instance_arena.push(Instance {
-                    //             name: explicit_component_inst.id.clone(),,
-                    //             offset: explicit_component_inst.component_insts.component_insts[0].at,
-                    //             width: usize,
-                    //             desc: Option<String>,
-                    //             array_size: Option<Vec<usize>>,
-                    //             type_idx: ComponentIdx,
-                    //             parent: Option<ComponentIdx>,
-                    //             children: Vec<InstanceIdx>,
-                    //             parameters: HashMap<String, Value>,
-
-                    //         });
-                    //     }
-                    //     todo!()
-                    // } else {
-                    //     bail!(
-                    //         "Component {} not found in scope",
-                    //         explicit_component_inst.id
-                    //     );
-                    // }
-                    // TODO: save these for later when we finalize the addrmaps, since we could instantiate an addrmap twice
-                    self.with_addrmap(addrmap_idx, |addrmap| {
-                        addrmap
-                            .explicit_instances
-                            .push(explicit_component_inst.clone());
-                    });
+                        // instantiate the explicit instances
+                        for inst in explicit_component_inst
+                            .component_insts
+                            .component_insts
+                            .iter()
+                        {
+                            // TODO: handle offsets
+                            self.instance_arena.push(Instance {
+                                name: inst.id.clone(),
+                                type_idx: component_idx,
+                                parent: Some(addrmap_idx),
+                                parameters: params.clone(),
+                                ..Default::default()
+                            });
+                            let inst_idx = self.instance_arena.len() - 1;
+                            self.with_addrmap(addrmap_idx, |addrmap| {
+                                addrmap.child_instances.push(inst_idx);
+                            })
+                        }
+                    } else {
+                        bail!(
+                            "Component {} not found in scope",
+                            explicit_component_inst.component_name
+                        );
+                    }
                 }
                 ComponentBodyElem::PropertyAssignment(property_assignment) => {
                     //println!("Property assignment: {:?}", property_assignment);
@@ -1332,6 +1409,57 @@ impl World {
             values,
         })
     }
+
+    // fn instantiate_addrmap(
+    //     &mut self,
+    //     addrmap_name: &str,
+    //     offset: usize,
+    // ) -> Result<usize, anyhow::Error> {
+    //     for component_idx in self.child_components.iter().copied() {
+    //         let addrmap_component = &self.component_arena[component_idx];
+    //         if addrmap_component.component_type() == ComponentType::AddrMap
+    //             && addrmap_component.name() == Some(addrmap_name)
+    //         {
+    //             let instance = Instance {
+    //                 name: addrmap_name.to_string(),
+    //                 type_idx: component_idx,
+    //                 ..Default::default()
+    //             };
+    //             self.instance_arena.push(instance);
+    //             let addrmap_instance_idx: InstanceIdx = self.instance_arena.len() - 1;
+    //             self.child_instances.push(self.instance_arena.len() - 1);
+
+    //             // now we need to instantiate all of the sub-components and instances of the addrmap
+    //             let addrmap = addrmap_component.as_addrmap().unwrap();
+    //             // TODO: child instances
+    //             addrmap.explicit_instances.iter().for_each(|inst| {
+    //                 let component_name = inst.component_name;
+    //                 self.find_component(addrmap_component, &component_name)
+    //                     .unwrap();
+    //                 // evaluate the parameter map
+    //                 for param_elem in inst.component_insts.param_insts.iter() {
+    //                     self.eval_param_elem(component_idx, param_elem);
+    //                 }
+
+    //                 for component_inst in inst.component_insts.component_insts.iter() {
+    //                     self.instantiate_component_under_instance(addrmap_instance_idx, )
+    //                 }
+    //             });
+
+    //             return Ok(addrmap_instance_idx);
+    //         }
+    //     }
+    //     bail!("Addrmap {} not found", addrmap_name)
+    // }
+
+    fn instantiate_addrmap(
+        &mut self,
+        addrmap_name: &str,
+        _offset: usize,
+    ) -> Result<usize, anyhow::Error> {
+        // TODO: I don't think we need all that. We can instantiate as we go.
+        bail!("Addrmap {} not found", addrmap_name)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1393,13 +1521,11 @@ struct AddrMapType {
     width: usize,
     parent: Option<ComponentIdx>,
     children: Vec<ComponentIdx>,
+    child_instances: Vec<InstanceIdx>,
     fields: HashMap<String, ComponentIdx>,
-    instances: Vec<RegisterInstance>,
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
     parameters: HashMap<String, ParamDefElem>,
-    /// instances that are instantiated in this addrmap
-    explicit_instances: Vec<ExplicitComponentInst>,
 }
 
 impl Component for AddrMapType {
@@ -1439,27 +1565,18 @@ impl Component for AddrMapType {
     }
 }
 
-pub fn generate_tock_registers_from_file(file: &Path, addrmaps: &[&str]) -> anyhow::Result<String> {
+pub fn generate_tock_registers_from_file(
+    file: &Path,
+    addrmaps: &[(&str, usize)],
+) -> anyhow::Result<String> {
     let src = FsFileSource::new();
     let root = Root::from_file(&src, file)?;
     println!("Found {} descriptions", root.descriptions.len());
 
-    let _root_root = World::parse(&root)?;
-    for d in root.descriptions.iter() {
-        match d {
-            Description::ComponentDef(c) => {
-                let t = c.def.type_;
-                let name = c.def.name.clone();
-                if let Some(name) = name.as_deref() {
-                    let body = &c.def.body;
-                    if t == ComponentType::AddrMap && addrmaps.contains(&name) {
-                        println!("Component {:?} {}", t, name);
-                        enumerate_instances(&root, body);
-                    }
-                }
-            }
-            _ => {}
-        }
+    let mut world = World::parse(&root)?;
+
+    for (addrmap_name, offset) in addrmaps.iter() {
+        world.instantiate_addrmap(*addrmap_name, *offset)?;
     }
     Ok("".to_string())
 }
@@ -1473,10 +1590,10 @@ mod test {
     fn test_mcu() {
         let result = generate_tock_registers_from_file(
             Path::new("/home/chswenson/work/mcu-sw/hw/mcu.rdl"),
-            &["mcu"],
+            &[("mcu", 0)],
         )
         .unwrap();
-        println!("{}", result);
+        println!("addrmap: {}", result);
     }
 
     #[test]

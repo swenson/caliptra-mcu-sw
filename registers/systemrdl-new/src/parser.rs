@@ -552,7 +552,7 @@ fn explicit_component_inst(i: &mut Tokens<'_>) -> Result<ExplicitComponentInst> 
     Ok(ExplicitComponentInst {
         component_inst_type,
         component_inst_alias,
-        id,
+        component_name: id,
         component_insts,
     })
 }

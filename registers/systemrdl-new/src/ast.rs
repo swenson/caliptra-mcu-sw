@@ -313,7 +313,7 @@ pub struct ConstraintBody {
 pub struct ExplicitComponentInst {
     pub component_inst_type: Option<ComponentInstType>,
     pub component_inst_alias: Option<ComponentInstAlias>,
-    pub id: String,
+    pub component_name: String,
     pub component_insts: ComponentInsts,
 }
 
