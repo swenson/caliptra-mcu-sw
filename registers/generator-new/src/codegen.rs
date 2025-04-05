@@ -551,7 +551,11 @@ impl World {
                     }
                 }
                 ComponentBodyElem::ComponentDef(component) => {
-                    println!("Component {:?} for regfile", component.def.name.as_deref());
+                    println!(
+                        "Component {:?} {:?} for regfile",
+                        component.def.type_,
+                        component.def.name.as_deref()
+                    );
                     let comp = self.convert_component_field(parent, component)?;
                     println!("Comp {:?}", comp);
                     if let Some(comp_idx) = comp {
