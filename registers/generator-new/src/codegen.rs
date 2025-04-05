@@ -4,9 +4,9 @@ use anyhow::bail;
 use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
-    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword, ParamDef,
-    ParamDefElem, ParamElem, PrimaryLiteral, PropAssignmentRhs, PropertyAssignment, PropertyType,
-    Root, UnaryOp,
+    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
+    InstanceOrPropRef, ParamDefElem, PrimaryLiteral, PropAssignmentRhs, PropertyAssignment,
+    PropertyType, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
@@ -1116,6 +1116,13 @@ impl World {
         Ok(value)
     }
 
+    fn evalutate_instance_or_prop_ref(
+        &self,
+        _i: &InstanceOrPropRef,
+    ) -> Result<Value, anyhow::Error> {
+        todo!()
+    }
+
     fn evaluate_constant_primary_base(
         &self,
         base: &ConstantPrimaryBase,
@@ -1182,6 +1189,14 @@ impl World {
         bail!("Casting not supported");
     }
 
+    fn evaluate_cast_value(
+        &self,
+        _value: Value,
+        _expr: &ConstantExpr,
+    ) -> Result<Value, anyhow::Error> {
+        bail!("Casting not supported");
+    }
+
     fn evaluate_constant_primary_int(
         &self,
         prim: &ConstantPrimary,
@@ -1195,10 +1210,20 @@ impl World {
         }
     }
 
+    fn eval_constant_primary_value(&self, prim: &ConstantPrimary) -> Result<Value, anyhow::Error> {
+        match prim {
+            ConstantPrimary::Base(base) => self.evaluate_constant_primary_base(base),
+            ConstantPrimary::Cast(base, cast) => {
+                let base = self.evaluate_constant_primary_base(base)?;
+                self.evaluate_cast_value(base, cast.as_ref())
+            }
+        }
+    }
+
     fn evaluate_constant_expr(&self, expr: &ConstantExpr) -> Result<Value, anyhow::Error> {
         match expr {
             ConstantExpr::ConstantPrimary(prim, cont) => {
-                let val = self.evaluate_constant_primary_int(prim)?;
+                let val = self.eval_constant_primary_value(prim)?;
                 self.evaluate_constant_expr_cont(val, cont)
             }
             ConstantExpr::UnaryOp(op, expr, cont) => {

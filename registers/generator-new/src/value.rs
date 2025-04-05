@@ -2,6 +2,7 @@
 
 use std::ops::{Neg, Not};
 
+use anyhow::bail;
 use mcu_registers_systemrdl_new::{
     ast::{
         AccessType, AddressingType, InstanceOrPropRef, InterruptType, OnReadType, OnWriteType,
@@ -88,83 +89,83 @@ impl Value {
         }
     }
 
-    pub(crate) fn try_andand(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_andand(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_oror(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_oror(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_lt(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_lt(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_gt(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_gt(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_lte(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_lte(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_gte(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_gte(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_eq(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_eq(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_neq(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_neq(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_rshift(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_rshift(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_lshift(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_lshift(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_and(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_and(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_or(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_or(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_xor(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_xor(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_xnor(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_xnor(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_times(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_times(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_divide(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_divide(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_modulus(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_modulus(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_add(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_add(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_sub(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_sub(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 
-    pub(crate) fn try_pow(&self, rhs: &Value) -> Result<Value, anyhow::Error> {
+    pub(crate) fn try_pow(&self, _rhs: &Value) -> Result<Value, anyhow::Error> {
         todo!()
     }
 }
@@ -213,19 +214,9 @@ impl From<String> for Value {
         Value::String(val)
     }
 }
-impl From<EnumReference> for Value {
-    fn from(val: EnumReference) -> Self {
-        Value::EnumReference(val.0)
-    }
-}
 impl From<&str> for Value {
     fn from(val: &str) -> Self {
         Value::String(val.into())
-    }
-}
-impl From<Reference> for Value {
-    fn from(val: Reference) -> Self {
-        Value::Reference(val)
     }
 }
 impl From<PrecedenceType> for Value {
@@ -259,136 +250,81 @@ impl From<InterruptType> for Value {
     }
 }
 impl TryFrom<Value> for u64 {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::U64(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::U64,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::U64,
                 value,
-            }),
+            ),
         }
     }
 }
 impl TryFrom<Value> for bool {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Bool(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::Boolean,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::Boolean,
                 value,
-            }),
+            ),
         }
     }
 }
 impl TryFrom<Value> for Bits {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Bits(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::Bits,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::Bits,
                 value,
-            }),
+            ),
         }
     }
 }
 impl TryFrom<Value> for String {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::String(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::String,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::String,
                 value,
-            }),
-        }
-    }
-}
-impl TryFrom<Value> for EnumReference {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
-        match value {
-            Value::EnumReference(value) => Ok(EnumReference(value)),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::String,
-                value,
-            }),
+            ),
         }
     }
 }
 impl TryFrom<Value> for AddressingType {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::AddressingType(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::AddressingType,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::AddressingType,
                 value,
-            }),
+            ),
         }
     }
 }
 impl TryFrom<Value> for AccessType {
-    type Error = RdlError<'static>;
-    fn try_from(value: Value) -> Result<'static, Self> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::AccessType(value) => Ok(value),
-            _ => Err(RdlError::UnexpectedPropertyType {
-                expected_type: PropertyType::AccessType,
+            _ => bail!(
+                "Unexpected property type. Expected {:?} but got {:?}",
+                PropertyType::AccessType,
                 value,
-            }),
+            ),
         }
-    }
-}
-
-pub fn parse_str_literal(s: &str) -> Result<String> {
-    if s.len() < 2 || !s.starts_with('"') || !s.ends_with('"') {
-        return Err(RdlError::BadStringLiteral);
-    }
-    Ok(s[1..s.len() - 1]
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\"))
-}
-
-fn to_bool<'a>(v: Value, parameters: Option<&'_ ParameterScope<'_>>) -> Result<'a, bool> {
-    match v {
-        Value::Bool(b) => Ok(b),
-        Value::Reference(r) => {
-            let r = r.path[0].clone();
-            match lookup_parameter_of_type(parameters, &r, PropertyType::Boolean) {
-                Ok(Value::Bool(b)) => Ok(*b),
-                _ => Err(RdlError::UnexpectedPropertyType {
-                    expected_type: PropertyType::Boolean,
-                    value: Value::Bool(false),
-                }),
-            }
-        }
-        _ => Err(RdlError::UnexpectedPropertyType {
-            expected_type: PropertyType::Boolean,
-            value: v,
-        }),
-    }
-}
-
-fn to_bit<'a>(v: Value, parameters: Option<&'_ ParameterScope<'_>>) -> Result<'a, Bits> {
-    match v {
-        Value::Bits(b) => Ok(b),
-        Value::Reference(r) => {
-            let r = r.path[0].clone();
-            match lookup_parameter_of_type(parameters, &r, PropertyType::Bits) {
-                Ok(Value::Bits(b)) => Ok(*b),
-                _ => Err(RdlError::UnexpectedPropertyType {
-                    expected_type: PropertyType::Bits,
-                    value: Value::Bool(false),
-                }),
-            }
-        }
-        _ => Err(RdlError::UnexpectedPropertyType {
-            expected_type: PropertyType::Bits,
-            value: v,
-        }),
     }
 }
 
