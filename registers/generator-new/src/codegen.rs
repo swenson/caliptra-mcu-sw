@@ -4,9 +4,9 @@ use anyhow::bail;
 use mcu_registers_systemrdl_new::ast::{
     ArrayOrRange, BinaryOp, ComponentBody, ComponentBodyElem, ComponentInsts, ComponentType,
     ConstantExpr, ConstantExprContinue, ConstantPrimary, ConstantPrimaryBase, Description, EnumDef,
-    ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment, IdentityOrPropKeyword,
-    InstanceOrPropRef, ParamDefElem, PrimaryLiteral, PropAssignmentRhs, PropertyAssignment,
-    PropertyType, Root, UnaryOp,
+    ExplicitComponentInst, ExplicitOrDefaultPropAssignment, ExplicitPropertyAssignment,
+    IdentityOrPropKeyword, InstanceOrPropRef, ParamDefElem, PrimaryLiteral, PropAssignmentRhs,
+    PropertyAssignment, PropertyType, Root, UnaryOp,
 };
 use mcu_registers_systemrdl_new::FsFileSource;
 use std::collections::HashMap;
@@ -811,22 +811,51 @@ impl World {
                 ComponentBodyElem::StructDef(_struct_def) => todo!(),
                 ComponentBodyElem::ConstraintDef(_constraint_def) => todo!(),
                 ComponentBodyElem::ExplicitComponentInst(explicit_component_inst) => {
-                    println!("Explicit component inst: {:?}", explicit_component_inst);
-                    if let Some(component_idx) = self.find_component(
-                        &self.component_arena[addrmap_idx],
-                        &explicit_component_inst.id,
-                    ) {
-                        println!(
-                            "Found component: {:?}",
-                            self.component_arena[component_idx].name()
-                        );
-                        todo!()
-                    } else {
-                        bail!(
-                            "Component {} not found in scope",
-                            explicit_component_inst.id
-                        );
-                    }
+                    // println!("Explicit component inst: {:?}", explicit_component_inst);
+                    // if let Some(component_idx) = self.find_component(
+                    //     &self.component_arena[addrmap_idx],
+                    //     &explicit_component_inst.id,
+                    // ) {
+                    //     println!(
+                    //         "Found component: {:?}",
+                    //         self.component_arena[component_idx].name()
+                    //     );
+
+                    //     // collectparameters
+                    //     for param in explicit_component_inst.component_insts.param_insts.iter() {
+
+                    //         self.eval_parameter(instance_idx, value)
+                    //         todo!();
+                    //     }
+
+                    //     for inst in explicit_component_inst.component_insts.component_insts.iter() {
+                    //         inst.at
+                    //         self.instance_arena.push(Instance {
+                    //             name: explicit_component_inst.id.clone(),,
+                    //             offset: explicit_component_inst.component_insts.component_insts[0].at,
+                    //             width: usize,
+                    //             desc: Option<String>,
+                    //             array_size: Option<Vec<usize>>,
+                    //             type_idx: ComponentIdx,
+                    //             parent: Option<ComponentIdx>,
+                    //             children: Vec<InstanceIdx>,
+                    //             parameters: HashMap<String, Value>,
+
+                    //         });
+                    //     }
+                    //     todo!()
+                    // } else {
+                    //     bail!(
+                    //         "Component {} not found in scope",
+                    //         explicit_component_inst.id
+                    //     );
+                    // }
+                    // TODO: save these for later when we finalize the addrmaps, since we could instantiate an addrmap twice
+                    self.with_addrmap(addrmap_idx, |addrmap| {
+                        addrmap
+                            .explicit_instances
+                            .push(explicit_component_inst.clone());
+                    });
                 }
                 ComponentBodyElem::PropertyAssignment(property_assignment) => {
                     //println!("Property assignment: {:?}", property_assignment);
@@ -1369,6 +1398,8 @@ struct AddrMapType {
     enums: Vec<Enum>,
     properties: HashMap<String, StringOrInt>,
     parameters: HashMap<String, ParamDefElem>,
+    /// instances that are instantiated in this addrmap
+    explicit_instances: Vec<ExplicitComponentInst>,
 }
 
 impl Component for AddrMapType {
