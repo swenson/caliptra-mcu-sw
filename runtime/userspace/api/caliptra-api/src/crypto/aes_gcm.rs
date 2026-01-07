@@ -11,6 +11,7 @@ use caliptra_api::mailbox::{
     CmAesGcmSpdmEncryptInitResp, Cmk, MailboxReqHeader, Request,
     CMB_AES_GCM_ENCRYPTED_CONTEXT_SIZE, MAX_CMB_DATA_SIZE,
 };
+use core::convert::TryInto;
 use libsyscall_caliptra::mailbox::Mailbox;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -448,11 +449,16 @@ impl AesGcm {
 
         let context = self.context.ok_or(CaliptraApiError::AesGcmInvalidContext)?;
 
+        let mut tag_words = [0u32; 4];
+        for (dst, chunk) in tag_words.iter_mut().zip(tag.chunks_exact(4)) {
+            *dst = u32::from_le_bytes(chunk.try_into().expect("tag chunk"));
+        }
+
         let mut req = CmAesGcmDecryptFinalReq {
             hdr: MailboxReqHeader::default(),
             context,
             tag_len: tag.len() as u32,
-            tag,
+            tag: tag_words,
             ciphertext_size: 0,
             ciphertext: [0; MAX_CMB_DATA_SIZE],
         };

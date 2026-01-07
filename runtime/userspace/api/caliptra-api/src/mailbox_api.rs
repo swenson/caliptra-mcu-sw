@@ -55,6 +55,7 @@ pub const MAX_ECC_CERT_SIZE: usize = 1024;
 pub const MAX_CERT_CHUNK_SIZE: usize = 1024;
 pub const MAX_RANDOM_STIR_SIZE: usize = 48;
 pub const MAX_RANDOM_NUM_SIZE: usize = 48;
+const RESPONSE_HDR_SIZE: usize = size_of::<ResponseHdr>();
 
 const _: () = assert!(MAX_CRYPTO_MBOX_DATA_SIZE <= MAX_CMB_DATA_SIZE);
 const _: () = assert!(size_of::<DpeEcResp>() <= size_of::<InvokeDpeResp>());
@@ -154,10 +155,10 @@ pub(crate) enum DpeResponse {
     zerocopy::KnownLayout,
 )]
 pub(crate) struct CertifyEcKeyResp {
-    pub resp_hdr: ResponseHdr,
+    pub resp_hdr: [u8; RESPONSE_HDR_SIZE],
     pub new_context_handle: ContextHandle,
-    pub derived_pubkey_x: [u8; DPE_PROFILE.get_ecc_int_size()],
-    pub derived_pubkey_y: [u8; DPE_PROFILE.get_ecc_int_size()],
+    pub derived_pubkey_x: [u8; DPE_PROFILE.ecc_int_size()],
+    pub derived_pubkey_y: [u8; DPE_PROFILE.ecc_int_size()],
     pub cert_size: u32,
     pub cert: [u8; MAX_ECC_CERT_SIZE],
 }
@@ -173,7 +174,7 @@ pub(crate) struct CertifyEcKeyResp {
     zerocopy::KnownLayout,
 )]
 pub(crate) struct CertificateChainResp {
-    pub resp_hdr: ResponseHdr,
+    pub resp_hdr: [u8; RESPONSE_HDR_SIZE],
     pub certificate_size: u32,
     pub certificate_chain: [u8; MAX_CERT_CHUNK_SIZE],
 }
