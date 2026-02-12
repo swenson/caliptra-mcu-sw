@@ -16,7 +16,6 @@ mod test {
             CmDeriveStableKeyReq, CmDeriveStableKeyResp, CmHashAlgorithm, CmHmacReq, CmHmacResp,
             CmStableKeyType, CommandId,
         },
-        SocManager,
     };
     use caliptra_auth_man_types::{AuthManifestPrivKeysConfig, AuthManifestPubKeysConfig};
     use caliptra_image_gen::ImageGeneratorOwnerConfig;

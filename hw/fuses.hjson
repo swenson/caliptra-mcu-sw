@@ -24,16 +24,22 @@
         name: "dot_initialized",
         bits: 1,
         description: "DOT is enabled an initialized for this part.",
+        partition: "VENDOR_NON_SECRET_PROD_PARTITION",
+        layout: {type: "LinearMajorityVote", duplication: 3}
     },
     {
       name: "dot_fuse_array",
       bits: 256,
-      description: "One-time programmable state counter for DOT transitions. Each bit represents one state change. Increments from 0 to 255."
+      description: "One-time programmable state counter for DOT transitions. Each bit represents one state change. Increments from 0 to 255.",
+      partition: "VENDOR_NON_SECRET_PROD_PARTITION",
+      layout: {type: "OneHot"},
     },
     {
       name: "vendor_recovery_pk_hash",
       bits: 384,
-      description: "Vendor recovery key for DOT_OVERRIDE catastrophic recovery operations"
+      description: "Vendor recovery key for DOT_OVERRIDE catastrophic recovery operations",
+      partition: "VENDOR_SECRET_PROD_PARTITION",
+      layout: {type: "Single"},
     },
   ]
 }
