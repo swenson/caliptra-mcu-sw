@@ -74,20 +74,23 @@ fn exception_handler() -> ! {
     let mut mepc: usize;
     let mut sp: usize;
     let mut ra: usize;
+    let mut mtval: usize;
     unsafe {
         core::arch::asm!(
             "csrr {mcause}, mcause",
             "csrr {mepc}, mepc",
+            "csrr {mtval}, mtval",
             "csrr {sp}, mscratch",
             "addi {ra}, ra, 0",
             mcause = out(reg) mcause,
             mepc = out(reg) mepc,
+            mtval = out(reg) mtval,
             sp = out(reg) sp,
             ra = out(reg) ra
         )
     };
 
-    romtime::println!("EXCEPTION mcause={mcause:#08X} mepc={mepc:#08X} sp={sp:#08X} ra={ra:#08X}");
+    romtime::println!("EXCEPTION mcause={mcause:#08X} mepc={mepc:#08X} sp={sp:#08X} ra={ra:#08X}, mtval={mtval:#08X}");
     fatal_error(mcu_error::McuError::GENERIC_EXCEPTION)
 }
 
