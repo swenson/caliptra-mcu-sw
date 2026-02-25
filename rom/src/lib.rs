@@ -90,7 +90,7 @@ fn exception_handler() -> ! {
         )
     };
 
-    romtime::println!("EXCEPTION mcause={mcause:#08X} mepc={mepc:#08X} sp={sp:#08X} ra={ra:#08X}, mtval={mtval:#08X}");
+    romtime::println!("EXCEPTION mcause={mcause:#010X} mepc={mepc:#010X} sp={sp:#010X} ra={ra:#010X}, mtval={mtval:#010X}");
     fatal_error(mcu_error::McuError::GENERIC_EXCEPTION)
 }
 
