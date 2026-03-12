@@ -5,6 +5,7 @@ use libsyscall_caliptra::mcu_mbox::{CmdCode, MbxCmdStatus, McuMbox};
 use mcu_mbox_common::messages::{verify_checksum, MailboxReqHeader, MailboxRespHeader};
 use zerocopy::FromBytes;
 
+#[derive(Debug)]
 pub enum TransportError {
     DriverRxError,
     DriverTxError,
