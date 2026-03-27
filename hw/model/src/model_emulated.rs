@@ -21,6 +21,7 @@ use caliptra_emu_cpu::CpuOrgArgs;
 use caliptra_emu_cpu::{Cpu, CpuArgs, InstrTracer, Pic};
 use caliptra_emu_periph::CaliptraRootBus as CaliptraMainRootBus;
 use caliptra_emu_periph::SocToCaliptraBus;
+use caliptra_emu_periph::TbServicesCb;
 use caliptra_emu_types::RvAddr;
 use caliptra_emu_types::RvData;
 use caliptra_emu_types::RvSize;
@@ -41,7 +42,9 @@ use emulator_registers_generated::primary_flash::PrimaryFlashPeripheral;
 use emulator_registers_generated::root_bus::AutoRootBus;
 use mcu_config::McuMemoryMap;
 use mcu_rom_common::McuBootMilestones;
+#[cfg(feature = "testing")]
 use mcu_testing_common::i3c_socket_server::start_i3c_socket;
+#[cfg(feature = "testing")]
 use mcu_testing_common::{MCU_RUNNING, MCU_RUNTIME_STARTED};
 use registers_generated::fuses;
 use romtime::LifecycleControllerState;
@@ -89,6 +92,7 @@ pub struct ModelEmulated {
     dot_flash: Rc<RefCell<Ram>>,
     otp_partitions: Rc<RefCell<Vec<u8>>>,
     check_booted_to_runtime: bool,
+    mcu_uart_output: Rc<RefCell<Vec<u8>>>,
     pub usb_host_controller: emulator_periph::UsbHostController,
 }
 
@@ -124,18 +128,29 @@ impl McuHwModel for ModelEmulated {
             ..Default::default()
         };
 
+        let mcu_uart_output = Rc::new(RefCell::new(Vec::<u8>::new()));
+
         let bus_args = McuRootBusArgs {
             rom: params.mcu_rom.into(),
             pic: pic.clone(),
             clock: clock.clone(),
             offsets,
+            uart_output: Some(mcu_uart_output.clone()),
             ..Default::default()
         };
         let mcu_root_bus = McuRootBus::new(bus_args).unwrap();
 
         let mut i3c_controller = if let Some(i3c_port) = params.i3c_port {
-            let (rx, tx) = start_i3c_socket(&MCU_RUNNING, i3c_port);
-            I3cController::new(rx, tx)
+            #[cfg(feature = "testing")]
+            {
+                let (rx, tx) = start_i3c_socket(&MCU_RUNNING, i3c_port);
+                I3cController::new(rx, tx)
+            }
+            #[cfg(not(feature = "testing"))]
+            {
+                let _ = i3c_port;
+                I3cController::default()
+            }
         } else {
             I3cController::default()
         };
@@ -209,6 +224,9 @@ impl McuHwModel for ModelEmulated {
              initial_content: Option<&[u8]>,
              direct_read_region: Option<Rc<RefCell<caliptra_emu_bus::Ram>>>| {
                 // Use a temporary file for flash storage if we're running a test
+                #[cfg(target_arch = "wasm32")]
+                let flash_file = None;
+                #[cfg(not(target_arch = "wasm32"))]
                 let flash_file = Some(PathBuf::from(default_path));
 
                 DummyFlashCtrl::new(
@@ -266,14 +284,21 @@ impl McuHwModel for ModelEmulated {
         // Use MCU recovery interface when flash-based boot is enabled
         let use_mcu_recovery_interface = params.flash_boot;
 
+        let output_sink = output.sink().clone();
+        let timer = clock.timer();
+
         let (mut caliptra_cpu, soc_to_caliptra, soc_to_caliptra_bus, ext_mci) =
-            start_caliptra(&StartCaliptraArgs {
+            start_caliptra(StartCaliptraArgs {
                 rom: BytesOrPath::Bytes(params.caliptra_rom.to_vec()),
                 device_lifecycle,
                 req_idevid_csr,
                 use_mcu_recovery_interface,
                 extra_soc_bus: Some(params.caliptra_soc_axi_user.unwrap_or(0xdddd_dddd)),
                 ocp_lock_en: params.ocp_lock_en,
+                tb_services_cb: Some(TbServicesCb::new(move |ch| {
+                    output_sink.set_now(timer.now());
+                    output_sink.push_uart_char(ch);
+                })),
             })
             .expect("Failed to start Caliptra CPU");
         let soc_to_caliptra_bus = soc_to_caliptra_bus.unwrap();
@@ -433,6 +458,7 @@ impl McuHwModel for ModelEmulated {
             dot_flash,
             otp_partitions,
             check_booted_to_runtime: params.check_booted_to_runtime,
+            mcu_uart_output,
             usb_host_controller,
         };
         // Turn tracing on if the trace path was set
@@ -466,6 +492,7 @@ impl McuHwModel for ModelEmulated {
             assert!(self
                 .mci_boot_milestones()
                 .contains(McuBootMilestones::FIRMWARE_BOOT_FLOW_COMPLETE));
+            #[cfg(feature = "testing")]
             MCU_RUNTIME_STARTED.store(true, Ordering::Relaxed);
         }
 
@@ -495,15 +522,22 @@ impl McuHwModel for ModelEmulated {
         }
         let events = self.events_from_caliptra.try_iter().collect::<Vec<_>>();
         self.collected_events_from_caliptra.extend(events);
+        #[cfg(feature = "testing")]
         if self.cycle_count() % mcu_testing_common::TICK_NOTIFY_TICKS == 0 {
             mcu_testing_common::update_ticks(self.cycle_count());
         }
     }
 
     fn output(&mut self) -> &mut Output {
-        // In case the caller wants to log something, make sure the log has the
-        // correct time.env::
         self.output.sink().set_now(self.cpu.clock.now());
+        // Drain MCU UART output into the output sink
+        let mut uart_buf = self.mcu_uart_output.borrow_mut();
+        if !uart_buf.is_empty() {
+            for &ch in uart_buf.iter() {
+                self.output.sink().push_uart_char(ch);
+            }
+            uart_buf.clear();
+        }
         &mut self.output
     }
 
@@ -687,6 +721,7 @@ impl SocManager for &mut ModelEmulated {
 
 impl Drop for ModelEmulated {
     fn drop(&mut self) {
+        #[cfg(feature = "testing")]
         MCU_RUNNING.store(false, Ordering::Relaxed);
     }
 }

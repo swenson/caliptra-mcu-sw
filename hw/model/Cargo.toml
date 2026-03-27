@@ -6,7 +6,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["testing"]
+testing = ["dep:mcu-builder", "dep:mcu-testing-common"]
 fpga_realtime = [
     "dep:uio",
     "dep:mcu-config-fpga",
@@ -24,7 +25,7 @@ caliptra-emu-cpu.workspace = true
 caliptra-emu-periph.workspace = true
 caliptra-emu-types.workspace = true
 caliptra-hw-model-types.workspace = true
-caliptra-hw-model.workspace = true
+caliptra-hw-model = { workspace = true, default-features = false }
 caliptra-image-types.workspace = true
 caliptra-registers.workspace = true
 ecdsa.workspace = true
@@ -37,11 +38,11 @@ fips204.workspace = true
 hex.workspace = true
 int-enum.workspace = true
 libc.workspace = true
-mcu-builder.workspace = true
+mcu-builder = { workspace = true, optional = true }
 mcu-config-fpga = { workspace = true, optional = true }
 mcu-config.workspace = true
 mcu-rom-common.workspace = true
-mcu-testing-common.workspace = true
+mcu-testing-common = { workspace = true, optional = true }
 network-config.workspace = true
 p384.workspace = true
 poll-common.workspace = true

@@ -282,11 +282,12 @@ impl DummyFlashCtrl {
             }
             self.buffer
                 .copy_from_slice(&region.data()[offset..offset + Self::PAGE_SIZE]);
-        } else {
-            let file = self.file.as_mut().unwrap();
+        } else if let Some(file) = self.file.as_mut() {
             file.seek(std::io::SeekFrom::Start(offset as u64))
                 .and_then(|_| file.read_exact(&mut self.buffer))
                 .map_err(|_| FlashOpError::ReadError)?;
+        } else {
+            self.buffer.fill(0xFF);
         }
 
         let access_type = self.dma_ram_access_check(page_addr);
@@ -362,11 +363,11 @@ impl DummyFlashCtrl {
         }
 
         let offset = (page_num * Self::PAGE_SIZE as u32) as usize;
-        // Write to file first
-        let file = self.file.as_mut().unwrap();
-        file.seek(std::io::SeekFrom::Start(offset as u64))
-            .and_then(|_| file.write_all(&self.buffer))
-            .map_err(|_| FlashOpError::WriteError)?;
+        if let Some(file) = self.file.as_mut() {
+            file.seek(std::io::SeekFrom::Start(offset as u64))
+                .and_then(|_| file.write_all(&self.buffer))
+                .map_err(|_| FlashOpError::WriteError)?;
+        }
 
         // If direct_read_region is present, update it only if file write succeeded.
         if let Some(region) = self.direct_read_region.as_ref() {
@@ -387,16 +388,16 @@ impl DummyFlashCtrl {
         // Sanity check for the page number and file
         if page_num >= Self::MAX_PAGES
             || self.page_size.reg.get() < Self::PAGE_SIZE as u32
-            || self.file.is_none()
         {
             return Err(FlashOpError::EraseError);
         }
 
         let offset = (page_num * Self::PAGE_SIZE as u32) as usize;
-        let file = self.file.as_mut().unwrap();
-        file.seek(std::io::SeekFrom::Start(offset as u64))
-            .and_then(|_| file.write_all(&vec![0xFF; Self::PAGE_SIZE]))
-            .map_err(|_| FlashOpError::EraseError)?;
+        if let Some(file) = self.file.as_mut() {
+            file.seek(std::io::SeekFrom::Start(offset as u64))
+                .and_then(|_| file.write_all(&vec![0xFF; Self::PAGE_SIZE]))
+                .map_err(|_| FlashOpError::EraseError)?;
+        }
 
         // If direct_read_region is present, update it only if file erase succeeded
         if let Some(region) = self.direct_read_region.as_ref() {
