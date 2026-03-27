@@ -15,6 +15,7 @@ use caliptra_image_types::FwVerificationPqcKeyType;
 use caliptra_registers::mcu_mbox0::enums::MboxStatusE;
 pub use mcu_mgr::McuManager;
 use mcu_rom_common::McuBootMilestones;
+#[cfg(feature = "testing")]
 use mcu_testing_common::MCU_RUNNING;
 pub use model_emulated::ModelEmulated;
 use rand::{rngs::StdRng, SeedableRng};
@@ -30,6 +31,7 @@ use ureg::MmioMut;
 pub use vmem::read_otp_vmem_data;
 
 // Re-export flash image builder for creating flash images from firmware bytes
+#[cfg(feature = "testing")]
 pub use mcu_builder::flash_image::build_flash_image_bytes;
 
 mod bus_logger;
@@ -406,12 +408,11 @@ pub trait McuHwModel {
     fn i3c_port(&self) -> Option<u16>;
 
     fn exit_status(&self) -> Option<ExitStatus> {
-        // tests trigger success by stopping the emulator or FPGA.
+        #[cfg(feature = "testing")]
         if !MCU_RUNNING.load(Ordering::Relaxed) {
-            Some(ExitStatus::Passed)
-        } else {
-            None
+            return Some(ExitStatus::Passed);
         }
+        None
     }
 
     fn copy_output_until_exit_success(
