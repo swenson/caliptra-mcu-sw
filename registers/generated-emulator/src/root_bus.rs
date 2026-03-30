@@ -219,7 +219,8 @@ impl caliptra_emu_bus::Bus for AutoRootBus {
                 return result;
             }
         }
-        Err(caliptra_emu_bus::BusError::LoadAccessFault)
+        // Return 0 for unmapped reads instead of faulting (allows kernel to probe peripherals)
+        Ok(0)
     }
     fn write(
         &mut self,
@@ -318,7 +319,8 @@ impl caliptra_emu_bus::Bus for AutoRootBus {
                 return result;
             }
         }
-        Err(caliptra_emu_bus::BusError::StoreAccessFault)
+        // Silently ignore writes to unmapped addresses
+        Ok(())
     }
     fn poll(&mut self) {
         if let Some(periph) = self.usbdev_periph.as_mut() {
