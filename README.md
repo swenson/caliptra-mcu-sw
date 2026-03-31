@@ -1,5 +1,7 @@
 # Caliptra MCU firmware and software
 
+Testing the cherry pick process
+
 ## Building
 
 Install `rustup` to manage your Rust toolchain:
