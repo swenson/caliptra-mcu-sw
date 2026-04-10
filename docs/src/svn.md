@@ -3,10 +3,21 @@
 ## Overview
 
 Security Version Numbers (SVNs) provide anti-rollback protection for firmware
-running on the Caliptra subsystem. An SVN is a monotonically increasing integer
-stored in OTP fuses that establishes a minimum acceptable firmware version. Once
-a device boots authenticated firmware at a given SVN, the OTP fuses are updated
-so that older firmware with a lower SVN can never execute on that device again.
+running on the Caliptra subsystem. Each firmware component tracks two SVN
+values:
+
+- **`current_svn`** — the security version of the running firmware image,
+  declared by the image itself. This is purely informational for attestation and
+  versioning.
+- **`min_svn`** — the minimum acceptable security version, stored in OTP fuses.
+  Any image with `current_svn < min_svn` is rejected.
+
+Only `min_svn` is burned into OTP fuses. The `min_svn` value is set
+independently of `current_svn` — a firmware release may carry
+`current_svn = 10` but only request `min_svn = 7`, allowing the deployer to
+maintain rollback capability to versions 7–9 while running version 10. This
+separation gives deployers control over when to permanently commit to a
+minimum version.
 
 This document describes SVN enforcement for three categories of components:
 
@@ -15,7 +26,7 @@ This document describes SVN enforcement for three categories of components:
 2. **MCU Runtime firmware** — SVN enforcement is performed by the MCU ROM before
    jumping to MCU firmware.
 3. **SoC component images** — The SoC manifest carries a single SVN enforced by
-   Caliptra Core. Optionally, MCU Runtime can enforce per-component SVN checks
+   Caliptra Core. Optionally, MCU can enforce per-component SVN checks
    using an MCU-managed component SVN manifest and dedicated fuses.
 
 ## Threat Model
@@ -71,13 +82,13 @@ dedicated MCU SVN partition, depending on the integrator's fuse budget.
 
 | Fuse Field | Size | Encoding | Purpose |
 |---|---|---|---|
-| `MCU_RT_SVN` | 16 bytes | `OneHotLinearMajorityVote{bits:N, dupe:3}` | Anti-rollback for MCU Runtime firmware |
-| `SOC_IMAGE_SVN[0..M]` | 4 bytes each | `OneHotLinearMajorityVote{bits:N, dupe:3}` | Anti-rollback for each SoC component image |
+| `MCU_RT_MIN_SVN` | 16 bytes | `OneHotLinearMajorityVote{bits:N, dupe:3}` | Minimum acceptable SVN for MCU Runtime firmware |
+| `SOC_IMAGE_MIN_SVN[0..M]` | 4 bytes each | `OneHotLinearMajorityVote{bits:N, dupe:3}` | Minimum acceptable SVN for each SoC component image |
 | `MCU_ANTI_ROLLBACK_ENABLE` | 1 byte | `LinearMajorityVote{bits:1, dupe:3}` | Enable MCU-side anti-rollback enforcement (burned during provisioning) |
 
-The exact number of `SOC_IMAGE_SVN` slots (`M`) depends on the integrator's SoC
-image configuration and is defined in the platform's fuse definition file. Each
-slot corresponds to a component identifier in the SoC manifest.
+The exact number of `SOC_IMAGE_MIN_SVN` slots (`M`) depends on the integrator's
+SoC image configuration and is defined in the platform's fuse definition file.
+Each slot corresponds to a component identifier in the SVN Fuse Map.
 
 #### Fuse Encoding Rationale
 
@@ -95,8 +106,8 @@ See [Fuse Layout Options](fuses.md#fuse-layout-options) for encoding details.
 
 | Fuse Field | ECC | Recommended Layout |
 |---|:---:|---|
-| `MCU_RT_SVN` | ❌ | `OneHotLinearMajorityVote{bits:N, dupe:3}` |
-| `SOC_IMAGE_SVN[i]` | ❌ | `OneHotLinearMajorityVote{bits:N, dupe:3}` |
+| `MCU_RT_MIN_SVN` | ❌ | `OneHotLinearMajorityVote{bits:N, dupe:3}` |
+| `SOC_IMAGE_MIN_SVN[i]` | ❌ | `OneHotLinearMajorityVote{bits:N, dupe:3}` |
 | `MCU_ANTI_ROLLBACK_ENABLE` | ✅ | `LinearMajorityVote{bits:1, dupe:3}` or `Single{bits:1}` with ECC |
 
 The `MCU_ANTI_ROLLBACK_ENABLE` fuse is write-once and can use ECC. SVN counter
@@ -105,17 +116,23 @@ fuses must not use ECC because they are updated in the field.
 ## MCU Image Header
 
 The MCU Runtime binary includes an `McuImageHeader` at the start of the image.
-This header carries the image's declared SVN:
+This header carries the image's current and minimum SVN values:
 
 | Field | Size | Description |
 |---|---|---|
-| `svn` | 2 bytes | Security version number of this MCU Runtime image |
-| `reserved1` | 2 bytes | Reserved for future use |
-| `reserved2` | 4 bytes | Reserved for future use |
+| `current_svn` | 2 bytes | Security version of this MCU Runtime image |
+| `min_svn` | 2 bytes | Requested minimum SVN to burn into OTP (0 = no update requested) |
+| `reserved` | 4 bytes | Reserved for future use |
 
-The SVN value is set at build time via the firmware bundler's `--svn` option and
-is embedded in the binary before it is signed and included in the firmware
-bundle.
+- `current_svn` is the version of the image for enforcement and attestation. ROM
+  rejects the image if `current_svn < fuse_min_svn`.
+- `min_svn` is the value ROM should burn into the `MCU_RT_MIN_SVN` fuse. ROM only
+  burns if `min_svn > fuse_min_svn`. A value of 0 means no fuse update is
+  requested. `min_svn` must be ≤ `current_svn`.
+
+Both values are set at build time via the firmware bundler (e.g.,
+`--svn <current>` and `--min-svn <min>`) and embedded in the binary before
+signing.
 
 ## SoC Image SVN Tracking
 
@@ -134,16 +151,21 @@ managed by MCU firmware that maps each SoC component identifier to an SVN value.
 | Magic | 4 bytes | Identifier `0x4D435356` (`"MCSV"`) |
 | Version | 2 bytes | Manifest format version |
 | Entry Count | 2 bytes | Number of component SVN entries |
-| Entries | 8 bytes × N | Array of `(component_id: u32, svn: u32)` pairs |
+| Entries | 12 bytes × N | Array of `(component_id: u32, current_svn: u32, min_svn: u32)` tuples |
+
+Each entry carries both the component's `current_svn` (for enforcement — reject
+if below fuse) and `min_svn` (for fuse burning — the new floor to commit to).
+`min_svn` must be ≤ `current_svn`. A `min_svn` of 0 means no fuse update is
+requested for that component.
 
 When present, MCU Runtime uses this manifest to enforce per-component SVN checks
-against the `SOC_IMAGE_SVN[i]` fuses during image loading. When absent, only the
+against the `SOC_IMAGE_MIN_SVN[i]` fuses during image loading. When absent, only the
 SoC manifest-level SVN (enforced by Caliptra Core) provides anti-rollback
-protection for SoC images, and the `SOC_IMAGE_SVN` fuses are not used.
+protection for SoC images, and the `SOC_IMAGE_MIN_SVN` fuses are not used.
 
 This is an optional extension — integrators who do not need per-component SoC
 image anti-rollback can omit both the MCU Component SVN Manifest and the
-`SOC_IMAGE_SVN` fuses.
+`SOC_IMAGE_MIN_SVN` fuses.
 
 ### Loading and Authenticating the Component SVN Manifest
 
@@ -242,17 +264,17 @@ the MCU SVN before jumping to firmware:
 
 1. MCU ROM waits for Caliptra to signal that MCU firmware is ready in SRAM.
 2. MCU ROM reads the `McuImageHeader` from the start of the loaded image.
-3. MCU ROM reads `MCU_RT_SVN` from OTP and decodes the fuse value.
+3. MCU ROM reads `MCU_RT_MIN_SVN` (the fused `min_svn`) from OTP and decodes it.
 4. MCU ROM reads `MCU_ANTI_ROLLBACK_ENABLE` from OTP.
 5. If anti-rollback is enabled (fuse is set):
-   - If `header.svn < fuse_svn`: MCU ROM rejects the image and reports a fatal
-     error (`ROM_MCU_SVN_CHECK_FAILED`). The device does not boot.
-   - If `header.svn ≥ fuse_svn`: MCU ROM proceeds.
-6. MCU ROM triggers a reset to enter the Firmware Boot flow, which jumps to the
+   - If `header.current_svn < fuse_min_svn`: MCU ROM rejects the image and
+     reports a fatal error (`ROM_MCU_SVN_CHECK_FAILED`). The device does not
+     boot.
+   - If `header.current_svn ≥ fuse_min_svn`: MCU ROM proceeds.
+6. MCU ROM checks if a `min_svn` fuse burn is needed (see
+   [SVN Fuse Update Flow](#svn-fuse-update-flow)).
+7. MCU ROM triggers a reset to enter the Firmware Boot flow, which jumps to the
    MCU Runtime.
-
-**SVN fuse update for MCU Runtime** occurs after the firmware has successfully
-booted and is described in [SVN Fuse Update Flow](#svn-fuse-update-flow) below.
 
 ```mermaid
 sequenceDiagram
@@ -262,16 +284,19 @@ sequenceDiagram
     participant MCI as MCI
 
     ROM->>SRAM: Read McuImageHeader
-    SRAM-->>ROM: header (svn, ...)
-    ROM->>OTP: Read MCU_RT_SVN fuse
-    OTP-->>ROM: fuse_svn
+    SRAM-->>ROM: header (current_svn, min_svn)
+    ROM->>OTP: Read MCU_RT_MIN_SVN fuse (fuse_min_svn)
+    OTP-->>ROM: fuse_min_svn
     ROM->>OTP: Read MCU_ANTI_ROLLBACK_ENABLE
     OTP-->>ROM: anti_rollback_enable
 
     alt anti-rollback enabled (fuse set)
-        alt header.svn < fuse_svn
+        alt header.current_svn < fuse_min_svn
             ROM->>MCI: Fatal error (ROM_MCU_SVN_CHECK_FAILED)
-        else header.svn ≥ fuse_svn
+        else header.current_svn ≥ fuse_min_svn
+            alt header.min_svn > fuse_min_svn
+                ROM->>OTP: Burn MCU_RT_MIN_SVN to header.min_svn
+            end
             ROM->>MCI: Proceed to firmware boot
         end
     else anti-rollback not enabled
@@ -296,11 +321,14 @@ When an MCU Runtime update is applied via the hitless update mechanism:
 4. MCU Runtime triggers a hitless update reset.
 5. MCU ROM enters the Hitless Firmware Update flow.
 6. MCU ROM reads the `McuImageHeader` from the new image in SRAM.
-7. MCU ROM reads `MCU_RT_SVN` and `MCU_ANTI_ROLLBACK_ENABLE` from OTP.
-8. If anti-rollback is enabled and `header.svn < fuse_svn`:
+7. MCU ROM reads `MCU_RT_MIN_SVN` and `MCU_ANTI_ROLLBACK_ENABLE` from OTP.
+8. If anti-rollback is enabled and `header.current_svn < fuse_min_svn`:
    - MCU ROM rejects the update and reports a fatal error. The device must
      recover by loading firmware with an acceptable SVN.
-9. If `header.svn ≥ fuse_svn`: MCU ROM jumps to the new firmware.
+9. If `header.current_svn ≥ fuse_min_svn`:
+   - If `header.min_svn > fuse_min_svn`: MCU ROM burns the `MCU_RT_MIN_SVN` fuse
+     to `header.min_svn`.
+   - MCU ROM jumps to the new firmware.
 
 ```mermaid
 sequenceDiagram
@@ -312,17 +340,20 @@ sequenceDiagram
     RT->>Caliptra: ACTIVATE_FIRMWARE
     Note over RT,Caliptra: Hitless update reset
     ROM->>ROM: Read McuImageHeader from SRAM
-    ROM->>OTP: Read MCU_RT_SVN, MCU_ANTI_ROLLBACK_ENABLE
-    alt anti-rollback enabled (fuse set) and header.svn < fuse_svn
+    ROM->>OTP: Read MCU_RT_MIN_SVN (fuse_min_svn), MCU_ANTI_ROLLBACK_ENABLE
+    alt anti-rollback enabled and header.current_svn < fuse_min_svn
         ROM->>ROM: Fatal error
     else
+        alt header.min_svn > fuse_min_svn
+            ROM->>OTP: Burn MCU_RT_MIN_SVN to header.min_svn
+        end
         ROM->>ROM: Jump to new firmware
     end
 ```
 
 ### Runtime — SoC Image SVN Enforcement (Optional)
 
-When the MCU Component SVN Manifest is present and `SOC_IMAGE_SVN` fuses are
+When the MCU Component SVN Manifest is present and `SOC_IMAGE_MIN_SVN` fuses are
 provisioned, MCU Runtime enforces per-component SVN checks during image loading:
 
 1. MCU Runtime authenticates the MCU Component SVN Manifest (e.g., by verifying
@@ -330,12 +361,13 @@ provisioned, MCU Runtime enforces per-component SVN checks during image loading:
    command).
 2. For each SoC image to be loaded:
    a. MCU Runtime looks up the image's component identifier in the MCU Component
-      SVN Manifest to obtain its declared SVN.
-   b. MCU Runtime reads the corresponding `SOC_IMAGE_SVN[i]` fuse from OTP.
-   c. If `manifest_svn < fuse_svn`: the image is rejected and not loaded to the
-      target SoC component. An error is reported.
-   d. If `manifest_svn ≥ fuse_svn`: the image is loaded normally.
-3. The mapping from component identifiers to `SOC_IMAGE_SVN` fuse slots is
+      SVN Manifest to obtain its `current_svn`.
+   b. MCU Runtime reads the corresponding `SOC_IMAGE_MIN_SVN[i]` fuse (`fuse_min_svn`)
+      from OTP.
+   c. If `current_svn < fuse_min_svn`: the image is rejected and not loaded to
+      the target SoC component. An error is reported.
+   d. If `current_svn ≥ fuse_min_svn`: the image is loaded normally.
+3. The mapping from component identifiers to `SOC_IMAGE_MIN_SVN` fuse slots is
    defined by the platform configuration.
 
 If the MCU Component SVN Manifest is not present, per-component SVN enforcement
@@ -344,49 +376,127 @@ SoC manifest-level SVN enforced by Caliptra Core.
 
 ## SVN Fuse Update Flow
 
-SVN fuses are updated (burned forward) only after firmware has successfully
-booted and proven functional. This is a deliberate design choice: burning fuses
-before successful boot could brick a device if the new firmware fails to
-operate.
+SVN `min_svn` fuses are **only burned by MCU ROM** — never by MCU Runtime or
+any other software. This ensures fuse programming occurs in the most trusted
+execution context, before mutable firmware has control of the system.
+
+### Principles
+
+- Fuses store `min_svn`, not `current_svn`. The fused value is a floor — it
+  does not track what is currently running, only what the minimum acceptable
+  version is.
+- `min_svn` is set independently by the firmware deployer. A firmware image with
+  `current_svn = 10` may request `min_svn = 7`, preserving the ability to roll
+  back to versions 7–9.
+- Fuse burns are monotonic: ROM only burns if the requested `min_svn` strictly
+  exceeds the current fuse value. The burn is idempotent and power-fail safe
+  (one-hot encoding means partial burns cannot decrease the value).
+
+### Trigger 1: Firmware Image SVN Section (Primary Mechanism)
+
+The primary trigger for `min_svn` fuse updates is the firmware image itself.
+When MCU ROM boots a new image (on cold boot or hitless update reset), it reads
+the `min_svn` fields from the authenticated image and burns fuses if needed.
+
+**MCU Runtime `min_svn`:**
+
+1. MCU ROM reads the `McuImageHeader` from the loaded image in SRAM.
+2. MCU ROM compares `header.min_svn` against the current `MCU_RT_MIN_SVN` fuse
+   value.
+3. If `header.min_svn > fuse_min_svn` and `MCU_ANTI_ROLLBACK_ENABLE` is set:
+   a. MCU ROM burns additional one-hot bits in the `MCU_RT_MIN_SVN` fuse to
+      represent `header.min_svn`.
+   b. MCU ROM reads back the fuse and verifies the update.
+4. If `header.min_svn ≤ fuse_min_svn` or `header.min_svn == 0`: no burn.
+
+**SoC Component `min_svn`:**
+
+1. MCU ROM reads the MCU Component SVN Manifest (if present and previously
+   authenticated by Caliptra via `AUTHORIZE_AND_STASH`).
+2. For each entry in the manifest where `min_svn > 0`:
+   a. MCU ROM looks up the component's fuse slot in the SVN Fuse Map.
+   b. MCU ROM compares `entry.min_svn` against the current `SOC_IMAGE_MIN_SVN[i]`
+      fuse value.
+   c. If `entry.min_svn > fuse_min_svn`: MCU ROM burns the fuse.
+3. If the manifest is absent, no SoC component fuses are burned.
+
+```mermaid
+sequenceDiagram
+    participant ROM as MCU ROM
+    participant SRAM as MCU SRAM
+    participant OTP as OTP Controller
+
+    ROM->>SRAM: Read McuImageHeader
+    SRAM-->>ROM: current_svn, min_svn
+
+    ROM->>OTP: Read MCU_RT_MIN_SVN (fuse_min_svn)
+    alt header.min_svn > fuse_min_svn
+        ROM->>OTP: Burn MCU_RT_MIN_SVN to header.min_svn
+        ROM->>OTP: Read back and verify
+    end
+
+    opt MCU Component SVN Manifest present
+        loop for each manifest entry with min_svn > 0
+            ROM->>OTP: Read SOC_IMAGE_MIN_SVN[i]
+            alt entry.min_svn > fuse_min_svn
+                ROM->>OTP: Burn SOC_IMAGE_MIN_SVN[i] to entry.min_svn
+            end
+        end
+    end
+```
+
+### Trigger 2: Runtime-Stashed SVN Update Request (Experimental)
+
+In some deployments, an operator may need to advance `min_svn` fuses without
+deploying a new firmware image — for example, after confirming that an older
+firmware version has a critical vulnerability and should be permanently blocked.
+
+In this flow, MCU Runtime receives an authenticated command (e.g., via an SPDM
+vendor-defined message) requesting a `min_svn` update for one or more
+components. Since only ROM can burn fuses, MCU Runtime must stash the request
+for ROM to process on the next reset.
+
+**Conceptual flow:**
+
+1. MCU Runtime receives an authenticated `SET_MIN_SVN` command over a secure
+   channel (e.g., SPDM VDM, authenticated mailbox).
+2. MCU Runtime validates the request: the requested `min_svn` must be
+   ≤ `current_svn` for each component.
+3. MCU Runtime writes the SVN update request to a stash location and triggers a
+   reset.
+4. On the next boot, MCU ROM reads the stash, validates the entries, and burns
+   the requested `min_svn` values.
+5. MCU ROM clears the stash after processing.
+
+> **⚠ Open Problem: Stash Protection**
+>
+> The stash location must survive reset but also be protected against tampering.
+> Possible approaches include:
+>
+> - **MCI mailbox SRAM**: Survives MCU reset, but any AXI-accessible agent could
+>   potentially write to it. Would need the request to be cryptographically
+>   signed so ROM can verify authenticity.
+> - **Caliptra-managed storage**: MCU Runtime could ask Caliptra to store the
+>   request (e.g., via a mailbox command). ROM would retrieve it from Caliptra
+>   after the next boot. This provides better protection but requires Caliptra
+>   support.
+> - **Authenticated and integrity-protected blob**: The stash is HMAC'd or
+>   signed using a key known to Caliptra, and ROM verifies the signature before
+>   processing. This allows any storage location to be used safely.
+>
+> Until the stash protection mechanism is defined and implemented, this trigger
+> is considered **experimental** and should not be relied upon for production
+> deployments. The firmware image SVN section (Trigger 1) is the recommended
+> mechanism.
 
 ### When SVN Fuses Are Updated
 
-| Component | Who Updates | When |
-|---|---|---|
-| Caliptra Core FMC/RT | Caliptra Core ROM | During Caliptra Core's own boot, before handing off to FMC |
-| MCU Runtime | MCU Runtime (via OTP API) | After MCU Runtime has successfully booted and initialized |
-| SoC images (optional) | MCU Runtime (via OTP API) | After the SoC image has been successfully loaded and activated (requires MCU Component SVN Manifest) |
-
-### MCU Runtime SVN Update
-
-After MCU Runtime successfully boots, it updates the `MCU_RT_SVN` fuse if the
-running firmware's SVN exceeds the current fuse value:
-
-1. MCU Runtime reads its own SVN from the `McuImageHeader` in SRAM.
-2. MCU Runtime reads `MCU_RT_SVN` from OTP.
-3. If `image_svn > fuse_svn`:
-   a. MCU Runtime computes the new encoded fuse value by burning additional
-      one-hot bits to represent the higher SVN.
-   b. MCU Runtime writes the updated value to the `MCU_RT_SVN` fuse via the OTP
-      DAI.
-   c. MCU Runtime reads back the fuse value and verifies the update succeeded.
-4. If `image_svn ≤ fuse_svn`: no fuse update is needed.
-
-This update is idempotent and power-fail safe:
-
-- Burning additional one-hot bits can only increase the SVN value.
-- A partial burn (due to power loss) results in either the old value or a value
-  between old and new, both of which are valid states — the full update will
-  complete on the next boot.
-- The majority vote encoding provides additional resilience against single-bit
-  errors during the burn.
-
-### SoC Image SVN Update (Optional)
-
-When the MCU Component SVN Manifest is in use: after a SoC image is successfully
-loaded and the downstream component signals readiness, MCU Runtime updates the
-corresponding `SOC_IMAGE_SVN[i]` fuse following the same procedure as the MCU
-Runtime SVN update.
+| Component | Who Burns Fuse | Trigger | When |
+|---|---|---|---|
+| Caliptra Core FMC/RT | Caliptra Core ROM | Caliptra's own image SVN | During Caliptra boot |
+| MCU Runtime | MCU ROM | `McuImageHeader.min_svn` | Cold boot or hitless update reset |
+| SoC images (optional) | MCU ROM | MCU Component SVN Manifest `min_svn` | Cold boot or hitless update reset |
+| Any component | MCU ROM | Runtime-stashed request (experimental) | Next boot after stash |
 
 ## Platform Configuration
 
@@ -397,16 +507,16 @@ Integrators must define the following in their platform configuration:
 ```js
 {
   non_secret_vendor: [
-    {"mcu_rt_svn": 16},           // 16 bytes for MCU RT SVN
-    {"soc_image_svn_0": 4},       // 4 bytes per SoC image SVN slot
-    {"soc_image_svn_1": 4},
+    {"mcu_rt_min_svn": 16},           // 16 bytes for MCU RT min SVN
+    {"soc_image_min_svn_0": 4},       // 4 bytes per SoC image min SVN slot
+    {"soc_image_min_svn_1": 4},
     // ... additional slots as needed
     {"mcu_anti_rollback_enable": 1}
   ],
   fields: [
-    {name: "mcu_rt_svn", bits: 32},  // logical SVN range 0..32
-    {name: "soc_image_svn_0", bits: 8},
-    {name: "soc_image_svn_1", bits: 8},
+    {name: "mcu_rt_min_svn", bits: 32},  // logical min SVN range 0..32
+    {name: "soc_image_min_svn_0", bits: 8},
+    {name: "soc_image_min_svn_1", bits: 8},
     {name: "mcu_anti_rollback_enable", bits: 1}
   ]
 }
@@ -419,19 +529,19 @@ device lifetime and the number of SoC components.
 ### Component SVN Fuse Map
 
 ROM and MCU Runtime must be compiled with a static mapping from SVN component
-identifiers to OTP fuse entries. This map tells the firmware which fuse slot
-backs each component's SVN, and is required for both the MCU Runtime SVN check
-(in ROM) and the per-component SoC image SVN checks (in MCU Runtime).
+identifiers to OTP fuse entries. This map tells ROM which fuse slot backs each
+component's `min_svn`, and is used for both the MCU Runtime SVN check and the
+per-component SoC image SVN checks.
 
 The map is defined as a platform-specific constant table:
 
 ```rust
-/// Maps a component identifier to its OTP fuse entry for SVN storage.
+/// Maps a component identifier to its OTP fuse entry for min_svn storage.
 pub struct SvnFuseMapEntry {
     /// Component identifier (matches the MCU Component SVN Manifest).
     /// Use a well-known value (e.g., 0x00000002) for the MCU Runtime itself.
     pub component_id: u32,
-    /// Reference to the generated OTP fuse entry for this component's SVN.
+    /// Reference to the generated OTP fuse entry for this component's min_svn.
     pub fuse_entry: &'static FuseEntryInfo,
 }
 
@@ -439,24 +549,23 @@ pub struct SvnFuseMapEntry {
 pub static SVN_FUSE_MAP: &[SvnFuseMapEntry] = &[
     SvnFuseMapEntry {
         component_id: 0x0000_0002, // MCU RT
-        fuse_entry: &OTP_MCU_RT_SVN,
+        fuse_entry: &OTP_MCU_RT_MIN_SVN,
     },
     SvnFuseMapEntry {
         component_id: 0x0000_1000, // SoC image 0
-        fuse_entry: &OTP_SOC_IMAGE_SVN_0,
+        fuse_entry: &OTP_SOC_IMAGE_MIN_SVN_0,
     },
     SvnFuseMapEntry {
         component_id: 0x0000_1001, // SoC image 1
-        fuse_entry: &OTP_SOC_IMAGE_SVN_1,
+        fuse_entry: &OTP_SOC_IMAGE_MIN_SVN_1,
     },
     // ... additional entries as needed
 ];
 ```
 
-ROM uses this map to resolve `MCU_RT_SVN` for the MCU Runtime SVN check at boot.
-MCU Runtime uses it to resolve `SOC_IMAGE_SVN[i]` for each component when
-processing the MCU Component SVN Manifest during image loading and when burning
-SVN fuses after successful activation.
+ROM uses this map to resolve fuse entries for both SVN enforcement (comparing
+`current_svn` against the fused `min_svn`) and fuse burning (writing a new
+`min_svn` from the image header or manifest).
 
 If a component identifier from the MCU Component SVN Manifest does not have a
 corresponding entry in the fuse map, MCU Runtime skips per-component SVN
@@ -466,9 +575,12 @@ failures.
 
 ### McuImageHeader SVN Assignment
 
-The firmware bundler's `--svn <value>` flag sets the SVN in the
-`McuImageHeader`. The build system must increment this value whenever a security
-fix is included in a firmware release.
+The firmware bundler sets both `current_svn` and `min_svn` in the
+`McuImageHeader` (e.g., `--svn <current>` and `--min-svn <min>`). The build
+system must increment `current_svn` for each security-relevant release.
+`min_svn` should be set to the oldest version that the deployer considers
+acceptable — this is a deployment policy decision, not necessarily tied to the
+current version.
 
 ### ImageVerifier Implementation
 
@@ -482,32 +594,51 @@ impl ImageVerifier for McuImageVerifier {
         let Ok((header, _)) = McuImageHeader::ref_from_prefix(header) else {
             return false;
         };
-        let Ok(fuse_svn) = otp.read_mcu_rt_svn() else {
+        let Ok(fuse_min_svn) = otp.read_mcu_rt_min_svn() else {
             return false;
         };
         if otp.read_mcu_anti_rollback_enable().unwrap_or(0) == 0 {
             return true; // anti-rollback not yet enabled
         }
-        header.svn >= fuse_svn
+        header.current_svn >= fuse_min_svn
     }
 }
 ```
 
 ## Security Considerations
 
-### SVN Update Timing
+### min_svn vs current_svn Separation
 
-SVN fuses are updated **after** successful boot, not before or during the
-authentication step. This prevents a scenario where a power failure during fuse
-programming bricks the device by committing to a firmware version that cannot
-actually run.
+The separation of `min_svn` (fuse floor) from `current_svn` (image version)
+gives deployers explicit control over the anti-rollback commitment. This is
+important because:
+
+- A deployer may want to test a new firmware version before permanently
+  committing to it as the minimum. By setting `min_svn` lower than
+  `current_svn`, rollback to known-good versions remains possible.
+- Once a vulnerability is confirmed in older versions, the deployer releases a
+  firmware image (or sends an authenticated command) with `min_svn` raised to
+  permanently block those versions.
+- The OTP fuse only stores the floor — it does not leak information about what
+  version is currently running.
+
+### ROM-Only Fuse Burning
+
+Only MCU ROM burns `min_svn` fuses. This ensures:
+
+- Fuse programming runs in the most trusted execution context (immutable ROM)
+  before mutable firmware has control.
+- MCU Runtime cannot be exploited to burn fuses to attacker-chosen values.
+- The attack surface for fuse manipulation is limited to the authenticated
+  firmware image (which is signed) or the experimental stash mechanism (which
+  requires cryptographic authentication).
 
 ### One-Way Commitment
 
-OTP fuses can only be burned from 0→1 (or equivalently, the SVN count can only
-increase). There is no mechanism to decrease an SVN value. If a firmware release
-with a given SVN is found to be defective, the only remedy is to release new
-firmware with an SVN ≥ the committed value.
+OTP fuses can only be burned from 0→1 (or equivalently, `min_svn` can only
+increase). There is no mechanism to decrease a `min_svn` value. If a firmware
+release with a given `min_svn` is found to be incorrect, the only remedy is to
+release new firmware with `current_svn ≥` the committed `min_svn`.
 
 ### Anti-Rollback Enable Fuse
 
@@ -523,19 +654,22 @@ verify that this fuse has been set.
 
 ### SVN Exhaustion
 
-The maximum SVN value is limited by the number of fuse bits allocated. With
-one-hot encoding:
+The maximum `min_svn` value is limited by the number of fuse bits allocated.
+With one-hot encoding:
 
 - 32 bits → max SVN of 32
 - 128 bits → max SVN of 128
 
-Integrators must allocate enough bits for the expected number of security
-updates over the device's operational lifetime. If the SVN reaches its maximum
-value, no further anti-rollback updates are possible, but the device continues
-to enforce the maximum SVN.
+Integrators must allocate enough bits for the expected number of `min_svn`
+advances over the device's operational lifetime. Note that `min_svn` advances
+are typically far less frequent than firmware releases, since `current_svn` can
+increase without advancing `min_svn`. If `min_svn` reaches its maximum value,
+no further anti-rollback updates are possible, but the device continues to
+enforce the maximum `min_svn`.
 
 ### Interaction with Device Ownership Transfer
 
 SVN fuses are orthogonal to device ownership. Ownership transfer (DOT) does not
-reset or modify SVN values. A new owner inherits the device's current SVN state
-and must provide firmware with SVNs ≥ the committed values.
+reset or modify `min_svn` values. A new owner inherits the device's current
+`min_svn` state and must provide firmware with `current_svn ≥` the committed
+values.
