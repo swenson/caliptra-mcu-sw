@@ -86,7 +86,10 @@ impl Bus for EmuCtrl {
                     eprintln!("MCU requested emulator exit with status {}", val as i32);
                     status.set(Some(val as i32));
                 } else {
+                    #[cfg(not(target_arch = "wasm32"))]
                     exit(val as i32);
+                    #[cfg(target_arch = "wasm32")]
+                    eprintln!("[EMU] MCU exit requested with code {val}");
                 }
             }
 

@@ -410,6 +410,23 @@ pub trait McuHwModel {
     fn save_otp_memory(&self, path: &Path) -> Result<()>;
     fn read_otp_memory(&self) -> Vec<u8>;
 
+    /// Drain accumulated OTP DAI operation log entries (read/write/digest commands).
+    /// Returns the entries since the last call. Default impl returns empty.
+    fn take_otp_dai_log(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Snapshot of the Caliptra Key Vault for inspection.
+    /// Default returns an empty snapshot. The emulated model overrides this.
+    fn key_vault_snapshot(&self) -> caliptra_emu_periph::KeyVaultSnapshot {
+        caliptra_emu_periph::KeyVaultSnapshot {
+            keys: vec![0u8; 24 * 64],
+            key_control: vec![0u32; 24],
+            pcrs: (0..32).map(|_| vec![0u8; 48]).collect(),
+            pcr_control: vec![0u32; 32],
+        }
+    }
+
     fn read_dot_flash(&self) -> Vec<u8>;
     fn write_dot_flash(&mut self, data: &[u8]) -> Result<()>;
 

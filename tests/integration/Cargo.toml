@@ -24,7 +24,7 @@ caliptra-emu-bus.workspace = true
 caliptra-emu-cpu.workspace = true
 caliptra-emu-types.workspace = true
 caliptra-hw-model-types.workspace = true
-caliptra-hw-model.workspace = true
+caliptra-hw-model = { workspace = true, features = ["platform-specific"] }
 caliptra-image-gen.workspace = true
 caliptra-image-crypto.workspace = true
 caliptra-image-types = { workspace = true, features = ["std"] }
