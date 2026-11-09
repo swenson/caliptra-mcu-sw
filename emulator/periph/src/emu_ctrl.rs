@@ -76,7 +76,10 @@ impl Bus for EmuCtrl {
     fn write(&mut self, _size: RvSize, addr: RvAddr, val: RvData) -> Result<(), BusError> {
         match addr {
             EmuCtrl::ADDR_EXIT => {
+                #[cfg(not(target_arch = "wasm32"))]
                 exit(val as i32);
+                #[cfg(target_arch = "wasm32")]
+                eprintln!("[EMU] MCU exit requested with code {val}");
             }
             _ => Err(BusError::StoreAccessFault)?,
         }
