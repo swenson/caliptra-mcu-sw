@@ -14,6 +14,7 @@ Abstract:
 
 use caliptra_emu_bus::{Bus, BusError};
 use caliptra_emu_types::{RvAddr, RvData, RvSize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::exit;
 use std::{cell::Cell, rc::Rc};
 
