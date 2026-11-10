@@ -144,13 +144,21 @@ pub async fn image_loading_task(soc_image_load_list: &'static [u32]) {
             mbox_sram.release_lock().unwrap();
             mbox_sram.acquire_lock().unwrap();
         }
-        match image_loading(
-            &EMULATED_DMA_MAPPING,
-            soc_image_load_list,
-            mcu_fw_hitless_update_reset,
-        )
-        .await
-        {
+        // With no SoC images to load there is nothing to stream or authorize.
+        // Skip image loading rather than opening and then finalizing a PLDM
+        // session: without a PLDM update agent (as in caliptra-wasm, which
+        // has no BMC) finalize fails and the app would exit.
+        let result = if soc_image_load_list.is_empty() {
+            Ok(())
+        } else {
+            image_loading(
+                &EMULATED_DMA_MAPPING,
+                soc_image_load_list,
+                mcu_fw_hitless_update_reset,
+            )
+            .await
+        };
+        match result {
             Ok(_) => {}
             Err(_) => {
                 let mut console_writer = Console::<DefaultSyscalls>::writer();
