@@ -220,6 +220,10 @@ pub struct InitParams<'a> {
 
     pub check_booted_to_runtime: bool,
 
+    /// Record the MCU's exit request (see `McuHwModel::mcu_exit_status`) and
+    /// halt the MCU instead of terminating the process.
+    pub capture_mcu_exit: bool,
+
     /// Override the default AXI user that the model uses to access the Caliptra SoC interface.
     pub caliptra_soc_axi_user: Option<u32>,
 
@@ -307,6 +311,7 @@ impl Default for InitParams<'_> {
             dot_flash_initial_contents: None,
             primary_flash_initial_contents: None,
             check_booted_to_runtime: true,
+            capture_mcu_exit: false,
             caliptra_soc_axi_user: None,
             flash_boot: false,
             force_fuse_owner_pk_hash: false,
@@ -415,6 +420,12 @@ pub trait McuHwModel {
     /// firmware to be written to the mailbox. For RTL implementations, this
     /// should come via a caliptra_top wire rather than an APB register.
     fn ready_for_fw(&self) -> bool;
+
+    /// The status the MCU passed to the emulator's exit register, when
+    /// `InitParams::capture_mcu_exit` is set and the MCU has exited.
+    fn mcu_exit_status(&self) -> Option<i32> {
+        None
+    }
 
     fn step_until_exit_success(&mut self) -> std::io::Result<()> {
         self.copy_output_until_exit_success(std::io::Sink::default())

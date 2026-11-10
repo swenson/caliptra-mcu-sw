@@ -16,9 +16,12 @@ use caliptra_emu_bus::{Bus, BusError};
 use caliptra_emu_types::{RvAddr, RvData, RvSize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::exit;
+use std::{cell::Cell, rc::Rc};
 
 /// Emulation Control
-pub struct EmuCtrl {}
+pub struct EmuCtrl {
+    exit_status: Option<Rc<Cell<Option<i32>>>>,
+}
 
 impl EmuCtrl {
     // Exit emulator address
@@ -30,7 +33,11 @@ impl EmuCtrl {
     ///
     /// * `name` - Name of the device
     pub fn new() -> Self {
-        Self {}
+        Self { exit_status: None }
+    }
+    /// Record exit requests in `status` instead of terminating the process.
+    pub fn capture_exit(&mut self, status: Rc<Cell<Option<i32>>>) {
+        self.exit_status = Some(status);
     }
     /// Memory map size.
     pub fn mmap_size(&self) -> RvAddr {
@@ -77,10 +84,14 @@ impl Bus for EmuCtrl {
     fn write(&mut self, _size: RvSize, addr: RvAddr, val: RvData) -> Result<(), BusError> {
         match addr {
             EmuCtrl::ADDR_EXIT => {
-                #[cfg(not(target_arch = "wasm32"))]
-                exit(val as i32);
-                #[cfg(target_arch = "wasm32")]
-                eprintln!("[EMU] MCU exit requested with code {val}");
+                if let Some(status) = &self.exit_status {
+                    status.set(Some(val as i32));
+                } else {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    exit(val as i32);
+                    #[cfg(target_arch = "wasm32")]
+                    eprintln!("[EMU] MCU exit requested with code {val}");
+                }
             }
             _ => Err(BusError::StoreAccessFault)?,
         }
